@@ -8,6 +8,8 @@ import plotly.graph_objects as go
 import plotly.express as px
 from typing import Dict, List, Tuple, Optional
 import warnings
+from requests.exceptions import RequestException
+from socket import timeout
 warnings.filterwarnings('ignore')
 
 class PortfolioOptimizer:
@@ -29,12 +31,22 @@ class PortfolioOptimizer:
         Returns:
             DataFrame with adjusted closing prices
         """
+        CRYPTO_MAP = {
+        'BTC': 'BTC-USD',
+        'ETH': 'ETH-USD',
+        'DOGE': 'DOGE-USD',
+        # Add other crypto mappings as needed
+        }
         try:
             # Clean and validate tickers
             clean_tickers = []
             for ticker in tickers:
                 # Remove any whitespace and convert to uppercase
                 clean_ticker = str(ticker).strip().upper()
+                if '.' in clean_ticker:
+                    clean_ticker = clean_ticker.replace('.', '-')
+                elif clean_ticker in CRYPTO_MAP:
+                    clean_ticker = CRYPTO_MAP[clean_ticker]
                 if clean_ticker and clean_ticker not in ['NAN', 'NONE', '']:
                     clean_tickers.append(clean_ticker)
             
@@ -59,7 +71,11 @@ class PortfolioOptimizer:
                     
                     # Download data for individual ticker
                     ticker_obj = yf.Ticker(ticker)
-                    hist_data = ticker_obj.history(period=period, auto_adjust=True)
+                    # Handle different period types
+                    if period == "max":
+                        hist_data = ticker_obj.history(period="max", auto_adjust=True)
+                    else:
+                        hist_data = ticker_obj.history(period=period, auto_adjust=True)
                     
                     if not hist_data.empty and len(hist_data) > 30:  # Minimum 30 days of data
                         data_dict[ticker] = hist_data['Close']
@@ -108,9 +124,12 @@ class PortfolioOptimizer:
             
             return price_data
             
+        except (RequestException, timeout) as e:
+            st.warning(f"Network error fetching {ticker}: {str(e)}")
+            failed_tickers.append(ticker)
         except Exception as e:
-            st.error(f"Error fetching historical data: {str(e)}")
-            return pd.DataFrame()
+            st.warning(f"Failed to fetch data for {ticker}: {str(e)}")
+            failed_tickers.append(ticker)
     
     def calculate_returns(self, price_data: pd.DataFrame, return_type: str = "daily") -> pd.DataFrame:
         """

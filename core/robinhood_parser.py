@@ -948,15 +948,15 @@ def parse_investment_documents(uploaded_files, doc_type, brokerage):
                     file_info.append(f"🔧 Using Generic CSV parser for {brokerage}")
                     success = tracker.parse_generic_csv(uploaded_file, brokerage)
                     
-            elif doc_type == "PDF":
-                if brokerage == "Robinhood":
-                    file_info.append("🔧 Using Robinhood PDF parser")
-                    success, debug_log = tracker.parse_robinhood_pdf(uploaded_file)
-                    if not success:
-                        file_info.extend(debug_log)
-                else:
-                    file_info.append(f"⚠️ PDF parsing for {brokerage} not implemented")
-                    success = False
+            # elif doc_type == "PDF":
+            #     if brokerage == "Robinhood":
+            #         file_info.append("🔧 Using Robinhood PDF parser")
+            #         success, debug_log = tracker.parse_robinhood_pdf(uploaded_file)
+            #         if not success:
+            #             file_info.extend(debug_log)
+            #     else:
+            #         file_info.append(f"⚠️ PDF parsing for {brokerage} not implemented")
+            #         success = False
             else:
                 file_info.append(f"❌ Unsupported document type: {doc_type}")
                 success = False

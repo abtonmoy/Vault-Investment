@@ -53,8 +53,13 @@ def show_investment_dashboard():
     if uploaded_files:
         # Parse investment documents
         tracker = parse_investment_documents(uploaded_files, doc_type, brokerage)
-        
+
+        if hasattr(tracker, "portfolio") and not tracker.portfolio.empty:
+            if 'market_value' in tracker.portfolio.columns and 'total_value' not in tracker.portfolio.columns:
+                tracker.portfolio['total_value'] = tracker.portfolio['market_value']
+            
         if tracker and not tracker.portfolio.empty:
+            st.session_state.tracker = tracker
             # Portfolio summary metrics
             st.subheader("📊 Portfolio Summary")
             summary = tracker.calculate_portfolio_summary()
