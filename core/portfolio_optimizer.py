@@ -473,8 +473,8 @@ class PortfolioOptimizer:
             )
             
             # Format axes as percentages
-            fig.update_xaxis(tickformat='.1%')
-            fig.update_yaxis(tickformat='.1%')
+            fig.update_xaxes(tickformat='.1%')
+            fig.update_yaxes(tickformat='.1%')
             
             return fig
             
