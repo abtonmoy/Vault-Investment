@@ -4,13 +4,16 @@ import numpy as np
 import streamlit as st
 from scipy.optimize import minimize
 from datetime import datetime, timedelta
-import plotly.graph_objects as go
-import plotly.express as px
 from typing import Dict, List, Tuple, Optional
 import warnings
 from requests.exceptions import RequestException
 from socket import timeout
+
+# Import the separate charts module
+
+
 warnings.filterwarnings('ignore')
+from utils.portfolio_charts import PortfolioCharts
 
 class PortfolioOptimizer:
     def __init__(self, risk_free_rate: float = 0.02):
@@ -19,6 +22,7 @@ class PortfolioOptimizer:
         self.mean_returns = None
         self.cov_matrix = None
         self.tickers = []
+        self.charts = PortfolioCharts()  # Initialize charts handler
         
     def fetch_historical_data(self, tickers: List[str], period: str = "2y") -> pd.DataFrame:
         """
@@ -32,11 +36,12 @@ class PortfolioOptimizer:
             DataFrame with adjusted closing prices
         """
         CRYPTO_MAP = {
-        'BTC': 'BTC-USD',
-        'ETH': 'ETH-USD',
-        'DOGE': 'DOGE-USD',
-        # Add other crypto mappings as needed
+            'BTC': 'BTC-USD',
+            'ETH': 'ETH-USD',
+            'DOGE': 'DOGE-USD',
+            # Add other crypto mappings as needed
         }
+        
         try:
             # Clean and validate tickers
             clean_tickers = []
@@ -125,11 +130,11 @@ class PortfolioOptimizer:
             return price_data
             
         except (RequestException, timeout) as e:
-            st.warning(f"Network error fetching {ticker}: {str(e)}")
-            failed_tickers.append(ticker)
+            st.warning(f"Network error fetching data: {str(e)}")
+            return pd.DataFrame()
         except Exception as e:
-            st.warning(f"Failed to fetch data for {ticker}: {str(e)}")
-            failed_tickers.append(ticker)
+            st.warning(f"Failed to fetch data: {str(e)}")
+            return pd.DataFrame()
     
     def calculate_returns(self, price_data: pd.DataFrame, return_type: str = "daily") -> pd.DataFrame:
         """
@@ -190,12 +195,13 @@ class PortfolioOptimizer:
             st.error(f"Error calculating portfolio performance: {str(e)}")
             return 0, 0, 0
     
-    def optimize_portfolio(self, optimization_type: str = "max_sharpe") -> Dict:
+    def optimize_portfolio(self, optimization_type: str = "max_sharpe", max_assets: int = 15) -> Dict:
         """
         Optimize portfolio based on selected criteria
         
         Args:
             optimization_type: Type of optimization ('max_sharpe', 'min_volatility', 'max_return')
+            max_assets: Maximum number of assets to include in optimization
             
         Returns:
             Dictionary with optimization results
@@ -204,13 +210,41 @@ class PortfolioOptimizer:
             if self.returns_data is None or self.returns_data.empty:
                 st.error("No returns data available for optimization")
                 return {}
-            
+                
+            # Pre-filter assets based on Sharpe ratio
+            if len(self.tickers) > max_assets:
+                st.info(f"Pre-filtering from {len(self.tickers)} to {max_assets} assets based on individual Sharpe ratios")
+                
+                individual_sharpe_ratios = {}
+                for ticker in self.tickers:
+                    returns = self.returns_data[ticker]
+                    mean_return = returns.mean() * 252
+                    volatility = returns.std() * np.sqrt(252)
+                    sharpe = (mean_return - self.risk_free_rate) / volatility if volatility > 0 else -999
+                    individual_sharpe_ratios[ticker] = sharpe
+                
+                # Select top assets by Sharpe ratio
+                top_assets = sorted(individual_sharpe_ratios.items(), key=lambda x: x[1], reverse=True)[:max_assets]
+                selected_tickers = [ticker for ticker, _ in top_assets]
+                
+                # Update data for selected tickers only
+                self.tickers = selected_tickers
+                self.returns_data = self.returns_data[selected_tickers]
+                self.mean_returns = self.returns_data.mean()
+                self.cov_matrix = self.returns_data.cov()
+                
             num_assets = len(self.tickers)
             
             # Constraints and bounds
             constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]  # Weights sum to 1
-            bounds = tuple((0.01, 0.4) for _ in range(num_assets))  # Min 1%, max 40% per asset
-            
+            # More flexible bounds - allow smaller minimum weights
+            if num_assets <= 10:
+                bounds = tuple((0.02, 0.5) for _ in range(num_assets))  # 2% min for fewer assets
+            elif num_assets <= 15:
+                bounds = tuple((0.01, 0.4) for _ in range(num_assets))  # 1% min for moderate number
+            else:
+                bounds = tuple((0.005, 0.2) for _ in range(num_assets))  # 0.5% min for many assets
+                        
             # Initial guess (equal weights)
             initial_guess = np.array([1.0 / num_assets] * num_assets)
             
@@ -391,138 +425,116 @@ class PortfolioOptimizer:
             st.error(f"Error in Monte Carlo simulation: {str(e)}")
             return pd.DataFrame()
     
-    def plot_efficient_frontier(self, frontier_df: pd.DataFrame, 
-                              simulation_df: pd.DataFrame = None,
-                              optimal_portfolio: Dict = None) -> go.Figure:
+    def calculate_portfolio_metrics(self, weights: np.ndarray) -> Dict:
         """
-        Plot efficient frontier with optimal portfolio
+        Calculate comprehensive portfolio metrics
         
         Args:
-            frontier_df: Efficient frontier data
-            simulation_df: Monte Carlo simulation data
-            optimal_portfolio: Optimal portfolio results
+            weights: Portfolio weights array
             
         Returns:
-            Plotly figure
+            Dictionary with portfolio metrics
         """
         try:
-            fig = go.Figure()
+            if self.returns_data is None or self.returns_data.empty:
+                return {}
             
-            # Plot Monte Carlo simulation if available
-            if simulation_df is not None and not simulation_df.empty:
-                fig.add_trace(go.Scatter(
-                    x=simulation_df['Volatility'],
-                    y=simulation_df['Return'],
-                    mode='markers',
-                    marker=dict(
-                        size=4,
-                        color=simulation_df['Sharpe'],
-                        colorscale='Viridis',
-                        colorbar=dict(title="Sharpe Ratio"),
-                        opacity=0.6
-                    ),
-                    name='Random Portfolios',
-                    hovertemplate="<b>Random Portfolio</b><br>" +
-                                "Return: %{y:.2%}<br>" +
-                                "Volatility: %{x:.2%}<br>" +
-                                "Sharpe: %{marker.color:.3f}<extra></extra>"
-                ))
+            # Basic performance metrics
+            expected_return, volatility, sharpe_ratio = self.portfolio_performance(weights)
             
-            # Plot efficient frontier
-            if not frontier_df.empty:
-                fig.add_trace(go.Scatter(
-                    x=frontier_df['Volatility'],
-                    y=frontier_df['Return'],
-                    mode='lines',
-                    line=dict(color='red', width=3),
-                    name='Efficient Frontier',
-                    hovertemplate="<b>Efficient Frontier</b><br>" +
-                                "Return: %{y:.2%}<br>" +
-                                "Volatility: %{x:.2%}<extra></extra>"
-                ))
+            # Portfolio returns time series
+            portfolio_returns = (self.returns_data * weights).sum(axis=1)
             
-            # Plot optimal portfolio
-            if optimal_portfolio and 'volatility' in optimal_portfolio:
-                fig.add_trace(go.Scatter(
-                    x=[optimal_portfolio['volatility']],
-                    y=[optimal_portfolio['expected_return']],
-                    mode='markers',
-                    marker=dict(
-                        size=15,
-                        color='gold',
-                        symbol='star',
-                        line=dict(color='black', width=2)
-                    ),
-                    name=f"Optimal Portfolio ({optimal_portfolio.get('method', '')})",
-                    hovertemplate="<b>Optimal Portfolio</b><br>" +
-                                f"Method: {optimal_portfolio.get('method', 'N/A')}<br>" +
-                                "Return: %{y:.2%}<br>" +
-                                "Volatility: %{x:.2%}<br>" +
-                                f"Sharpe: {optimal_portfolio.get('sharpe_ratio', 0):.3f}<extra></extra>"
-                ))
+            # Additional metrics
+            portfolio_std = portfolio_returns.std() * np.sqrt(252)  # Annualized
+            skewness = portfolio_returns.skew()
+            kurtosis = portfolio_returns.kurtosis()
             
-            # Update layout
-            fig.update_layout(
-                title='Efficient Frontier and Portfolio Optimization',
-                xaxis_title='Volatility (Risk)',
-                yaxis_title='Expected Return',
-                hovermode='closest',
-                template='plotly_dark',
-                width=800,
-                height=600
-            )
+            # Downside metrics
+            downside_returns = portfolio_returns[portfolio_returns < 0]
+            if not downside_returns.empty:
+                downside_std = downside_returns.std() * np.sqrt(252)
+                sortino_ratio = (expected_return - self.risk_free_rate) / downside_std
+            else:
+                sortino_ratio = np.inf
             
-            # Format axes as percentages
-            fig.update_xaxes(tickformat='.1%')
-            fig.update_yaxes(tickformat='.1%')
+            # Value at Risk (VaR) - 5% confidence level
+            var_5 = portfolio_returns.quantile(0.05)
             
-            return fig
+            # Conditional Value at Risk (CVaR)
+            cvar_5 = portfolio_returns[portfolio_returns <= var_5].mean()
+            
+            # Maximum drawdown
+            cumulative_returns = (1 + portfolio_returns).cumprod()
+            peak = cumulative_returns.expanding(min_periods=1).max()
+            drawdown = (cumulative_returns - peak) / peak
+            max_drawdown = drawdown.min()
+            
+            # Calmar ratio
+            calmar_ratio = expected_return / abs(max_drawdown) if max_drawdown < 0 else np.inf
+            
+            return {
+                'expected_return': expected_return,
+                'volatility': volatility,
+                'sharpe_ratio': sharpe_ratio,
+                'sortino_ratio': sortino_ratio,
+                'calmar_ratio': calmar_ratio,
+                'max_drawdown': max_drawdown,
+                'var_5': var_5,
+                'cvar_5': cvar_5,
+                'skewness': skewness,
+                'kurtosis': kurtosis,
+                'portfolio_std': portfolio_std
+            }
             
         except Exception as e:
-            st.error(f"Error plotting efficient frontier: {str(e)}")
-            return go.Figure()
+            st.error(f"Error calculating portfolio metrics: {str(e)}")
+            return {}
     
-    def create_allocation_chart(self, weights_dict: Dict[str, float]) -> go.Figure:
+    def get_asset_statistics(self) -> pd.DataFrame:
         """
-        Create pie chart for portfolio allocation
+        Get individual asset statistics
         
-        Args:
-            weights_dict: Dictionary of ticker weights
-            
         Returns:
-            Plotly figure
+            DataFrame with asset statistics
         """
         try:
-            # Filter out very small weights for cleaner visualization
-            filtered_weights = {k: v for k, v in weights_dict.items() if v > 0.005}  # > 0.5%
-            other_weight = sum(v for k, v in weights_dict.items() if v <= 0.005)
+            if self.returns_data is None or self.returns_data.empty:
+                return pd.DataFrame()
             
-            if other_weight > 0:
-                filtered_weights['Others'] = other_weight
+            stats = []
+            for ticker in self.tickers:
+                returns = self.returns_data[ticker]
+                
+                # Calculate metrics
+                annual_return = returns.mean() * 252
+                annual_vol = returns.std() * np.sqrt(252)
+                sharpe = (annual_return - self.risk_free_rate) / annual_vol if annual_vol > 0 else 0
+                
+                # Downside metrics
+                downside_returns = returns[returns < 0]
+                if not downside_returns.empty:
+                    downside_vol = downside_returns.std() * np.sqrt(252)
+                    sortino = (annual_return - self.risk_free_rate) / downside_vol
+                else:
+                    sortino = np.inf
+                
+                stats.append({
+                    'Symbol': ticker,
+                    'Annual_Return': annual_return,
+                    'Annual_Volatility': annual_vol,
+                    'Sharpe_Ratio': sharpe,
+                    'Sortino_Ratio': sortino,
+                    'Skewness': returns.skew(),
+                    'Kurtosis': returns.kurtosis(),
+                    'VaR_5': returns.quantile(0.05)
+                })
             
-            fig = go.Figure(data=[go.Pie(
-                labels=list(filtered_weights.keys()),
-                values=list(filtered_weights.values()),
-                hole=0.4,
-                textinfo='label+percent',
-                textposition='outside',
-                hovertemplate="<b>%{label}</b><br>" +
-                            "Weight: %{percent}<br>" +
-                            "Value: %{value:.3f}<extra></extra>"
-            )])
-            
-            fig.update_layout(
-                title='Optimal Portfolio Allocation',
-                template='plotly_dark',
-                width=600,
-                height=600
-            )
-            
-            return fig
+            return pd.DataFrame(stats)
             
         except Exception as e:
-            st.error(f"Error creating allocation chart: {str(e)}")
-            return go.Figure()
+            st.error(f"Error getting asset statistics: {str(e)}")
+            return pd.DataFrame()
 
 
 def run_portfolio_optimization(tracker, optimization_params: Dict = None):
@@ -666,7 +678,8 @@ def run_portfolio_optimization(tracker, optimization_params: Dict = None):
                 st.dataframe(allocation_df[['Ticker', 'Weight']], use_container_width=True)
             
             with col2:
-                allocation_chart = optimizer.create_allocation_chart(optimal_portfolio['weights'])
+                # Create allocation chart using the charts module
+                allocation_chart = optimizer.charts.create_allocation_pie_chart(optimal_portfolio['weights'])
                 st.plotly_chart(allocation_chart, use_container_width=True)
             
             # Advanced analysis
@@ -684,8 +697,8 @@ def run_portfolio_optimization(tracker, optimization_params: Dict = None):
                     with st.spinner("Generating efficient frontier..."):
                         frontier_df = optimizer.generate_efficient_frontier(num_frontier_points)
                 
-                # Plot efficient frontier
-                frontier_fig = optimizer.plot_efficient_frontier(
+                # Plot efficient frontier using the charts module
+                frontier_fig = optimizer.charts.plot_efficient_frontier(
                     frontier_df if frontier_df is not None else pd.DataFrame(),
                     simulation_df,
                     optimal_portfolio
@@ -732,6 +745,22 @@ def run_portfolio_optimization(tracker, optimization_params: Dict = None):
                     st.metric("Risk Change", f"{risk_change:+.2%}")
                 with col3:
                     st.metric("Sharpe Improvement", f"{sharpe_improvement:+.3f}")
+                
+                # Create weights comparison chart
+                weights_comparison_fig = optimizer.charts.create_weights_comparison(current_weights, optimal_portfolio['weights'])
+                st.plotly_chart(weights_comparison_fig, use_container_width=True)
+            
+            # Asset statistics
+            st.subheader("📈 Individual Asset Statistics")
+            asset_stats = optimizer.get_asset_statistics()
+            if not asset_stats.empty:
+                # Format percentages
+                for col in ['Annual_Return', 'Annual_Volatility', 'VaR_5']:
+                    asset_stats[col] = asset_stats[col].apply(lambda x: f"{x:.2%}")
+                for col in ['Sharpe_Ratio', 'Sortino_Ratio', 'Skewness', 'Kurtosis']:
+                    asset_stats[col] = asset_stats[col].apply(lambda x: f"{x:.3f}")
+                
+                st.dataframe(asset_stats, use_container_width=True)
             
             # Export results
             st.subheader("💾 Export Results")
