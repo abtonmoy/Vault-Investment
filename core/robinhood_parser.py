@@ -15,6 +15,7 @@ class InvestmentTracker:
         self.portfolio = pd.DataFrame()
         self.transactions = pd.DataFrame()
         self.historical_values = pd.DataFrame()
+        self.historical_values = pd.DataFrame()  # For visualizations
         self.risk_free_rate = 0.02  # Default risk-free rate (2%)
     
     def parse_robinhood_csv(self, uploaded_file):

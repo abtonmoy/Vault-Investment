@@ -3,6 +3,8 @@ import pandas as pd
 from datetime import datetime
 from core.robinhood_parser import parse_investment_documents
 from utils.equity_vis import render_equity_visualizations
+from core.data_fetcher import DataFetcher
+
 
 def show_investment_dashboard():
     """Main UI for investment tracking and analysis"""
@@ -55,8 +57,20 @@ def show_investment_dashboard():
         tracker = parse_investment_documents(uploaded_files, doc_type, brokerage)
 
         if hasattr(tracker, "portfolio") and not tracker.portfolio.empty:
-            if 'market_value' in tracker.portfolio.columns and 'total_value' not in tracker.portfolio.columns:
-                tracker.portfolio['total_value'] = tracker.portfolio['market_value']
+            # Add button to fetch historical data
+            if st.button("📊 Load Historical Data for Visualizations", type="secondary"):
+                with st.spinner("Fetching historical data. This may take a few minutes..."):
+                    # Get symbols from portfolio
+                    symbols = tracker.portfolio['symbol'].unique().tolist()
+                    
+                    # Fetch historical data
+                    fetcher = DataFetcher()
+                    _, _, historical_values = fetcher.fetch_historical_data(symbols, "1y")
+                    
+                    # Store in tracker
+                    tracker.historical_values = historical_values
+                    st.session_state.tracker = tracker
+                    st.success("Historical data loaded!")
             
         if tracker and not tracker.portfolio.empty:
             st.session_state.tracker = tracker

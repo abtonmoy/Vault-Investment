@@ -8,133 +8,38 @@ from typing import Dict, List, Tuple, Optional
 import warnings
 from requests.exceptions import RequestException
 from socket import timeout
+from core.data_fetcher import DataFetcher
+from scipy.optimize import differential_evolution
+from scipy.stats import mstats
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from joblib import Parallel, delayed
 
 # Import the separate charts module
-
-
 warnings.filterwarnings('ignore')
 from utils.portfolio_charts import PortfolioCharts
 
 class PortfolioOptimizer:
     def __init__(self, risk_free_rate: float = 0.02):
         self.risk_free_rate = risk_free_rate
+        self.fetcher = DataFetcher(risk_free_rate)
         self.returns_data = None
         self.mean_returns = None
         self.cov_matrix = None
         self.tickers = []
+        self.data_frequency = "daily"  # Track data frequency for annualization
         self.charts = PortfolioCharts()  # Initialize charts handler
         
     def fetch_historical_data(self, tickers: List[str], period: str = "2y") -> pd.DataFrame:
         """
-        Fetch historical price data for given tickers
-        
-        Args:
-            tickers: List of ticker symbols
-            period: Time period for historical data (1y, 2y, 5y, max)
-            
-        Returns:
-            DataFrame with adjusted closing prices
+        Fetch historical data using the shared fetcher
         """
-        CRYPTO_MAP = {
-            'BTC': 'BTC-USD',
-            'ETH': 'ETH-USD',
-            'DOGE': 'DOGE-USD',
-            # Add other crypto mappings as needed
-        }
-        
-        try:
-            # Clean and validate tickers
-            clean_tickers = []
-            for ticker in tickers:
-                # Remove any whitespace and convert to uppercase
-                clean_ticker = str(ticker).strip().upper()
-                if '.' in clean_ticker:
-                    clean_ticker = clean_ticker.replace('.', '-')
-                elif clean_ticker in CRYPTO_MAP:
-                    clean_ticker = CRYPTO_MAP[clean_ticker]
-                if clean_ticker and clean_ticker not in ['NAN', 'NONE', '']:
-                    clean_tickers.append(clean_ticker)
-            
-            if not clean_tickers:
-                st.error("No valid tickers provided")
-                return pd.DataFrame()
-                
-            self.tickers = clean_tickers
-            st.info(f"Fetching data for {len(clean_tickers)} tickers: {', '.join(clean_tickers)}")
-            
-            # Create progress bar
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # Fetch data using yfinance
-            data_dict = {}
-            failed_tickers = []
-            
-            for i, ticker in enumerate(clean_tickers):
-                try:
-                    status_text.text(f"Fetching {ticker}... ({i+1}/{len(clean_tickers)})")
-                    
-                    # Download data for individual ticker
-                    ticker_obj = yf.Ticker(ticker)
-                    # Handle different period types
-                    if period == "max":
-                        hist_data = ticker_obj.history(period="max", auto_adjust=True)
-                    else:
-                        hist_data = ticker_obj.history(period=period, auto_adjust=True)
-                    
-                    if not hist_data.empty and len(hist_data) > 30:  # Minimum 30 days of data
-                        data_dict[ticker] = hist_data['Close']
-                    else:
-                        failed_tickers.append(ticker)
-                        
-                except Exception as e:
-                    st.warning(f"Failed to fetch data for {ticker}: {str(e)}")
-                    failed_tickers.append(ticker)
-                
-                progress_bar.progress((i + 1) / len(clean_tickers))
-            
-            progress_bar.empty()
-            status_text.empty()
-            
-            if not data_dict:
-                st.error("No historical data could be fetched for any ticker")
-                return pd.DataFrame()
-            
-            # Combine data into single DataFrame
-            price_data = pd.DataFrame(data_dict)
-            
-            # Remove tickers with insufficient data
-            min_data_points = max(252, len(price_data) * 0.8)  # At least 80% of data or 252 days
-            valid_tickers = []
-            for ticker in price_data.columns:
-                if price_data[ticker].count() >= min_data_points:
-                    valid_tickers.append(ticker)
-                else:
-                    failed_tickers.append(ticker)
-            
-            if failed_tickers:
-                st.warning(f"Excluded tickers due to insufficient data: {', '.join(failed_tickers)}")
-            
-            if not valid_tickers:
-                st.error("No tickers have sufficient historical data for optimization")
-                return pd.DataFrame()
-                
-            price_data = price_data[valid_tickers]
-            self.tickers = valid_tickers
-            
-            # Forward fill missing values
-            price_data = price_data.fillna(method='ffill').dropna()
-            
-            st.success(f"Successfully fetched data for {len(valid_tickers)} tickers with {len(price_data)} days of data")
-            
-            return price_data
-            
-        except (RequestException, timeout) as e:
-            st.warning(f"Network error fetching data: {str(e)}")
-            return pd.DataFrame()
-        except Exception as e:
-            st.warning(f"Failed to fetch data: {str(e)}")
-            return pd.DataFrame()
+        price_data, returns_data, _ = self.fetcher.fetch_historical_data(tickers, period)
+        self.returns_data = returns_data
+        self.mean_returns = returns_data.mean() if returns_data is not None else None
+        self.cov_matrix = returns_data.cov() if returns_data is not None else None
+        self.tickers = returns_data.columns.tolist() if returns_data is not None else []
+        return price_data
     
     def calculate_returns(self, price_data: pd.DataFrame, return_type: str = "daily") -> pd.DataFrame:
         """
@@ -148,6 +53,8 @@ class PortfolioOptimizer:
             DataFrame with returns
         """
         try:
+            self.data_frequency = return_type  # Store data frequency
+            
             if return_type == "daily":
                 returns = price_data.pct_change().dropna()
             elif return_type == "weekly":
@@ -157,8 +64,8 @@ class PortfolioOptimizer:
             else:
                 returns = price_data.pct_change().dropna()
             
-            # Remove extreme outliers (returns > 50% or < -50%)
-            returns = returns.clip(-0.5, 0.5)
+            # Winsorize returns instead of clipping (1% on each tail)
+            returns = returns.apply(lambda x: mstats.winsorize(x, limits=[0.01, 0.01]))
             
             self.returns_data = returns
             self.mean_returns = returns.mean()
@@ -169,6 +76,16 @@ class PortfolioOptimizer:
         except Exception as e:
             st.error(f"Error calculating returns: {str(e)}")
             return pd.DataFrame()
+    
+    def get_annualization_factor(self) -> int:
+        """Get annualization factor based on data frequency"""
+        if self.data_frequency == "daily":
+            return 252
+        elif self.data_frequency == "weekly":
+            return 52
+        elif self.data_frequency == "monthly":
+            return 12
+        return 252  # Default to daily
     
     def portfolio_performance(self, weights: np.ndarray) -> Tuple[float, float, float]:
         """
@@ -181,10 +98,13 @@ class PortfolioOptimizer:
             Tuple of (expected_return, volatility, sharpe_ratio)
         """
         try:
-            # Annualize returns (assuming daily returns)
-            portfolio_return = np.sum(self.mean_returns * weights) * 252
-            portfolio_variance = np.dot(weights.T, np.dot(self.cov_matrix * 252, weights))
-            portfolio_volatility = np.sqrt(portfolio_variance)
+            epsilon = 1e-8  # Small value to avoid division by zero
+            annual_factor = self.get_annualization_factor()
+            
+            # Annualize returns
+            portfolio_return = np.sum(self.mean_returns * weights) * annual_factor
+            portfolio_variance = np.dot(weights.T, np.dot(self.cov_matrix * annual_factor, weights))
+            portfolio_volatility = np.sqrt(portfolio_variance) + epsilon
             
             # Calculate Sharpe ratio
             sharpe_ratio = (portfolio_return - self.risk_free_rate) / portfolio_volatility
@@ -211,39 +131,54 @@ class PortfolioOptimizer:
                 st.error("No returns data available for optimization")
                 return {}
                 
-            # Pre-filter assets based on Sharpe ratio
+            # Pre-filter assets using PCA and clustering
             if len(self.tickers) > max_assets:
-                st.info(f"Pre-filtering from {len(self.tickers)} to {max_assets} assets based on individual Sharpe ratios")
+                st.info(f"Pre-filtering from {len(self.tickers)} to {max_assets} assets using PCA and clustering")
                 
-                individual_sharpe_ratios = {}
-                for ticker in self.tickers:
-                    returns = self.returns_data[ticker]
-                    mean_return = returns.mean() * 252
-                    volatility = returns.std() * np.sqrt(252)
-                    sharpe = (mean_return - self.risk_free_rate) / volatility if volatility > 0 else -999
-                    individual_sharpe_ratios[ticker] = sharpe
-                
-                # Select top assets by Sharpe ratio
-                top_assets = sorted(individual_sharpe_ratios.items(), key=lambda x: x[1], reverse=True)[:max_assets]
-                selected_tickers = [ticker for ticker, _ in top_assets]
-                
-                # Update data for selected tickers only
-                self.tickers = selected_tickers
-                self.returns_data = self.returns_data[selected_tickers]
-                self.mean_returns = self.returns_data.mean()
-                self.cov_matrix = self.returns_data.cov()
+                try:
+                    # Transpose returns data so assets are rows and dates are columns
+                    asset_returns = self.returns_data.T
+                    
+                    # Perform PCA to reduce dimensionality
+                    pca = PCA(n_components=min(10, len(self.tickers)-1))
+                    asset_pca = pca.fit_transform(asset_returns)
+                    
+                    # Cluster using KMeans
+                    kmeans = KMeans(n_clusters=max_assets, random_state=42)
+                    clusters = kmeans.fit_predict(asset_pca)
+                    
+                    # Select representative assets from each cluster
+                    selected_tickers = []
+                    for cluster_id in range(max_assets):
+                        cluster_indices = np.where(clusters == cluster_id)[0]
+                        if len(cluster_indices) > 0:
+                            # Find asset closest to cluster center
+                            distances = np.linalg.norm(
+                                asset_pca[cluster_indices] - kmeans.cluster_centers_[cluster_id], 
+                                axis=1
+                            )
+                            closest_idx = cluster_indices[np.argmin(distances)]
+                            selected_tickers.append(self.tickers[closest_idx])
+                    
+                    # Update data for selected tickers only
+                    self.tickers = selected_tickers
+                    self.returns_data = self.returns_data[selected_tickers]
+                    self.mean_returns = self.returns_data.mean()
+                    self.cov_matrix = self.returns_data.cov()
+                    
+                except Exception as e:
+                    st.error(f"Error during asset filtering: {str(e)}")
+                    st.error("Using all assets for optimization")
                 
             num_assets = len(self.tickers)
             
             # Constraints and bounds
             constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]  # Weights sum to 1
-            # More flexible bounds - allow smaller minimum weights
-            if num_assets <= 10:
-                bounds = tuple((0.02, 0.5) for _ in range(num_assets))  # 2% min for fewer assets
-            elif num_assets <= 15:
-                bounds = tuple((0.01, 0.4) for _ in range(num_assets))  # 1% min for moderate number
-            else:
-                bounds = tuple((0.005, 0.2) for _ in range(num_assets))  # 0.5% min for many assets
+            
+            # Dynamic bounds based on number of assets
+            max_weight = min(0.5, 1.5 / num_assets)  # Allow larger weights for smaller portfolios
+            min_weight = max(0.005, 0.5 / num_assets)  # Higher minimum for smaller portfolios
+            bounds = tuple((min_weight, max_weight) for _ in range(num_assets))
                         
             # Initial guess (equal weights)
             initial_guess = np.array([1.0 / num_assets] * num_assets)
@@ -277,6 +212,7 @@ class PortfolioOptimizer:
             # Perform optimization
             st.info(f"Optimizing portfolio using {method_name} method...")
             
+            # First try SLSQP
             result = minimize(
                 objective,
                 initial_guess,
@@ -285,6 +221,20 @@ class PortfolioOptimizer:
                 constraints=constraints,
                 options={'ftol': 1e-9, 'disp': False}
             )
+            
+            # If SLSQP fails, try differential evolution
+            if not result.success:
+                st.warning("SLSQP optimization failed, trying differential evolution...")
+                result = differential_evolution(
+                    objective,
+                    bounds,
+                    strategy='best1bin',
+                    maxiter=1000,
+                    popsize=min(15, 5*num_assets),
+                    constraints=constraints,
+                    disp=False,
+                    tol=1e-7
+                )
             
             if not result.success:
                 st.error(f"Optimization failed: {result.message}")
@@ -301,7 +251,8 @@ class PortfolioOptimizer:
                 'volatility': volatility,
                 'sharpe_ratio': sharpe_ratio,
                 'success': result.success,
-                'raw_weights': optimal_weights
+                'raw_weights': optimal_weights,
+                'full_tickers': self.tickers.copy()  # Store full set of tickers used
             }
             
             return optimization_results
@@ -328,18 +279,21 @@ class PortfolioOptimizer:
             results = np.zeros((3, num_portfolios))
             
             # Generate target returns
-            min_ret = self.mean_returns.min() * 252
-            max_ret = self.mean_returns.max() * 252
+            min_ret = self.mean_returns.min() * self.get_annualization_factor()
+            max_ret = self.mean_returns.max() * self.get_annualization_factor()
             target_returns = np.linspace(min_ret, max_ret, num_portfolios)
             
-            constraints = [
-                {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
-            ]
-            bounds = tuple((0.01, 0.5) for _ in range(num_assets))
+            constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
             
-            for i, target in enumerate(target_returns):
+            # Dynamic bounds
+            max_weight = min(0.5, 1.5 / num_assets)
+            min_weight = max(0.005, 0.5 / num_assets)
+            bounds = tuple((min_weight, max_weight) for _ in range(num_assets))
+            
+            # Parallel optimization
+            def optimize_target(target):
                 # Add return constraint
-                return_constraint = {'type': 'eq', 'fun': lambda x, target=target: 
+                return_constraint = {'type': 'eq', 'fun': lambda x: 
                                    self.portfolio_performance(x)[0] - target}
                 cons = constraints + [return_constraint]
                 
@@ -355,11 +309,20 @@ class PortfolioOptimizer:
                 
                 if result.success:
                     ret, vol, sharpe = self.portfolio_performance(result.x)
-                    results[0, i] = ret
-                    results[1, i] = vol
-                    results[2, i] = sharpe
+                    return (ret, vol, sharpe)
                 else:
-                    results[:, i] = np.nan
+                    return (np.nan, np.nan, np.nan)
+            
+            # Run optimizations in parallel
+            parallel_results = Parallel(n_jobs=-1)(
+                delayed(optimize_target)(target) for target in target_returns
+            )
+            
+            # Process results
+            for i, res in enumerate(parallel_results):
+                results[0, i] = res[0]
+                results[1, i] = res[1]
+                results[2, i] = res[2]
             
             # Create DataFrame
             frontier_df = pd.DataFrame({
@@ -394,10 +357,12 @@ class PortfolioOptimizer:
             
             np.random.seed(42)  # For reproducibility
             
+            # Use Dirichlet distribution for more realistic weights
+            alpha = np.ones(num_assets) * 0.5  # Concentration parameter
+            
             for i in range(num_simulations):
-                # Generate random weights
-                weights = np.random.random(num_assets)
-                weights /= np.sum(weights)  # Normalize to sum to 1
+                # Generate random weights using Dirichlet distribution
+                weights = np.random.dirichlet(alpha)
                 
                 # Store weights
                 weights_array[i, :] = weights
@@ -439,21 +404,25 @@ class PortfolioOptimizer:
             if self.returns_data is None or self.returns_data.empty:
                 return {}
             
+            # Get annualization factor
+            annual_factor = self.get_annualization_factor()
+            epsilon = 1e-8
+            
             # Basic performance metrics
             expected_return, volatility, sharpe_ratio = self.portfolio_performance(weights)
             
             # Portfolio returns time series
             portfolio_returns = (self.returns_data * weights).sum(axis=1)
             
-            # Additional metrics
-            portfolio_std = portfolio_returns.std() * np.sqrt(252)  # Annualized
+            # Additional metrics with consistent annualization
+            portfolio_std = portfolio_returns.std() * np.sqrt(annual_factor) + epsilon
             skewness = portfolio_returns.skew()
             kurtosis = portfolio_returns.kurtosis()
             
             # Downside metrics
             downside_returns = portfolio_returns[portfolio_returns < 0]
             if not downside_returns.empty:
-                downside_std = downside_returns.std() * np.sqrt(252)
+                downside_std = downside_returns.std() * np.sqrt(annual_factor) + epsilon
                 sortino_ratio = (expected_return - self.risk_free_rate) / downside_std
             else:
                 sortino_ratio = np.inf
@@ -502,19 +471,21 @@ class PortfolioOptimizer:
             if self.returns_data is None or self.returns_data.empty:
                 return pd.DataFrame()
             
+            annual_factor = self.get_annualization_factor()
+            epsilon = 1e-8
             stats = []
             for ticker in self.tickers:
                 returns = self.returns_data[ticker]
                 
                 # Calculate metrics
-                annual_return = returns.mean() * 252
-                annual_vol = returns.std() * np.sqrt(252)
-                sharpe = (annual_return - self.risk_free_rate) / annual_vol if annual_vol > 0 else 0
+                annual_return = returns.mean() * annual_factor
+                annual_vol = returns.std() * np.sqrt(annual_factor) + epsilon
+                sharpe = (annual_return - self.risk_free_rate) / annual_vol
                 
                 # Downside metrics
                 downside_returns = returns[returns < 0]
                 if not downside_returns.empty:
-                    downside_vol = downside_returns.std() * np.sqrt(252)
+                    downside_vol = downside_returns.std() * np.sqrt(annual_factor) + epsilon
                     sortino = (annual_return - self.risk_free_rate) / downside_vol
                 else:
                     sortino = np.inf
@@ -602,6 +573,12 @@ def run_portfolio_optimization(tracker, optimization_params: Dict = None):
             with col5:
                 generate_frontier = st.checkbox("Generate Efficient Frontier", value=True)
                 num_frontier_points = st.number_input("Frontier Points", 50, 200, 100)
+                
+            col6, col7 = st.columns(2)
+            with col6:
+                max_assets = st.number_input("Max Assets in Optimization", 5, 50, 15)
+            with col7:
+                transaction_cost = st.number_input("Transaction Cost (%)", 0.0, 5.0, 0.1) / 100
         
         if st.button("🚀 Run Optimization", type="primary"):
             # Initialize optimizer
@@ -634,7 +611,7 @@ def run_portfolio_optimization(tracker, optimization_params: Dict = None):
             
             # Run optimization
             st.subheader("⚡ Optimization Results")
-            optimal_portfolio = optimizer.optimize_portfolio(optimization_type)
+            optimal_portfolio = optimizer.optimize_portfolio(optimization_type, max_assets)
             
             if not optimal_portfolio:
                 st.error("Optimization failed")
@@ -708,18 +685,26 @@ def run_portfolio_optimization(tracker, optimization_params: Dict = None):
             # Comparison with current portfolio
             st.subheader("⚖️ Current vs Optimal Portfolio")
             
+            # Get full list of tickers used in optimization
+            full_tickers = optimal_portfolio.get('full_tickers', optimizer.tickers)
+            
             # Calculate current portfolio weights
             current_weights = {}
             total_value = tracker.portfolio['market_value'].sum()
             for _, row in tracker.portfolio.iterrows():
                 ticker = row['symbol']
-                if ticker in optimizer.tickers:
+                if ticker in full_tickers:
                     current_weights[ticker] = row['market_value'] / total_value
             
+            # Create zero weights for assets in optimization but not in current portfolio
+            optimal_weights_full = {ticker: 0 for ticker in full_tickers}
+            optimal_weights_full.update(optimal_portfolio['weights'])
+            
             if current_weights:
-                current_performance = optimizer.portfolio_performance(
-                    np.array([current_weights.get(ticker, 0) for ticker in optimizer.tickers])
-                )
+                # Create current weights array including all optimization assets
+                current_weights_array = np.array([current_weights.get(ticker, 0) for ticker in full_tickers])
+                
+                current_performance = optimizer.portfolio_performance(current_weights_array)
                 
                 comparison_df = pd.DataFrame({
                     'Metric': ['Expected Return', 'Volatility', 'Sharpe Ratio'],
@@ -747,7 +732,10 @@ def run_portfolio_optimization(tracker, optimization_params: Dict = None):
                     st.metric("Sharpe Improvement", f"{sharpe_improvement:+.3f}")
                 
                 # Create weights comparison chart
-                weights_comparison_fig = optimizer.charts.create_weights_comparison(current_weights, optimal_portfolio['weights'])
+                weights_comparison_fig = optimizer.charts.create_weights_comparison(
+                    current_weights, 
+                    optimal_portfolio['weights']
+                )
                 st.plotly_chart(weights_comparison_fig, use_container_width=True)
             
             # Asset statistics
