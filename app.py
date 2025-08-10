@@ -1,6 +1,7 @@
 import streamlit as st
 from interfaces import investment_tracker
 from interfaces import portfolio_optimizer_interface
+from interfaces import risk_analysis_interface
 import base64
 
 
@@ -534,8 +535,8 @@ def main():
     """, unsafe_allow_html=True)
 
         
-    tab1, tab2 = st.tabs([ 
-        "📈 Investment Portfolio", "Portfolio Optimization"
+    tab1, tab2, tab3 = st.tabs([ 
+        " Investment Portfolio", "Portfolio Optimization", "Risk Analysis"
     ])
     
 
@@ -543,6 +544,9 @@ def main():
         investment_tracker.show_investment_dashboard()
     with tab2:
         portfolio_optimizer_interface.show_portfolio_optimization_tab()
+    with tab3:
+        risk_analysis_interface.show_risk_analysis_dashboard()
+    
 
 if __name__ == "__main__":
     main()

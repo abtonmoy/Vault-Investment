@@ -1061,29 +1061,29 @@ def render_equity_visualizations(tracker):
             st.plotly_chart(waterfall_fig, use_container_width=True)
     
     # Historical performance
-    hist_fig = historical_performance_chart(tracker.historical_values)
-    if hist_fig:
-        st.plotly_chart(hist_fig, use_container_width=True)
+    # hist_fig = historical_performance_chart(tracker.historical_values)
+    # if hist_fig:
+    #     st.plotly_chart(hist_fig, use_container_width=True)
     
     # Capital Allocation Line
-    cal_fig = capital_allocation_line(tracker.portfolio, tracker.risk_free_rate)
-    if cal_fig:
-        st.plotly_chart(cal_fig, use_container_width=True)
+    # cal_fig = capital_allocation_line(tracker.portfolio, tracker.risk_free_rate)
+    # if cal_fig:
+    #     st.plotly_chart(cal_fig, use_container_width=True)
     
     # Sector allocation
-    sector_fig = sector_allocation_chart(tracker.portfolio)
-    if sector_fig:
-        st.plotly_chart(sector_fig, use_container_width=True)
+    # sector_fig = sector_allocation_chart(tracker.portfolio)
+    # if sector_fig:
+    #     st.plotly_chart(sector_fig, use_container_width=True)
 
-    historic_heatmap_fig = historical_portfolio_heatmap(tracker.historical_values)
-    if historic_heatmap_fig:
-        st.plotly_chart(historic_heatmap_fig, use_container_width=True)
+    # historic_heatmap_fig = historical_portfolio_heatmap(tracker.historical_values)
+    # if historic_heatmap_fig:
+    #     st.plotly_chart(historic_heatmap_fig, use_container_width=True)
 
-    historic_per_heatmap_fig =historical_portfolio_percentage_heatmap(tracker.historical_values)
-    if historic_per_heatmap_fig:
-        st.plotly_chart(historic_per_heatmap_fig, use_container_width=True)
+    # historic_per_heatmap_fig =historical_portfolio_percentage_heatmap(tracker.historical_values)
+    # if historic_per_heatmap_fig:
+    #     st.plotly_chart(historic_per_heatmap_fig, use_container_width=True)
 
-    # Risk analysis
-    risk_fig = risk_analysis_chart(tracker.portfolio)
-    if risk_fig:
-        st.plotly_chart(risk_fig, use_container_width=True)
+    # # Risk analysis
+    # risk_fig = risk_analysis_chart(tracker.portfolio)
+    # if risk_fig:
+    #     st.plotly_chart(risk_fig, use_container_width=True)
