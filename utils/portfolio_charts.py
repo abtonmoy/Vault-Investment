@@ -36,23 +36,429 @@ class PortfolioCharts:
     # -------------------------
     def create_portfolio_worth_chart(self, tracker, historical_data: pd.DataFrame = None) -> go.Figure:
         """
-        Main entry point to create portfolio worth visualization.
-        Decides whether to plot historical timeline or current holdings only.
+        Create portfolio worth visualization tracking ACTUAL value over time.
+        This shows how your current holdings would have performed historically.
         """
         try:
-            if not hasattr(tracker, 'portfolio') or tracker.portfolio.empty:
-                st.warning("No portfolio data available for visualization")
-                return self._create_empty_chart("No Portfolio Data Available")
-
-            if hasattr(tracker, 'historical_values') and tracker.historical_values is not None and len(tracker.historical_values) > 0:
-                return self._create_historical_worth_chart(tracker, historical_data)
-            else:
+            # Method 1: Use transaction data to build true portfolio timeline
+            if hasattr(tracker, 'transactions') and tracker.transactions is not None and not tracker.transactions.empty:
+                portfolio_timeline = self._build_portfolio_timeline_from_transactions(tracker.transactions)
+                if portfolio_timeline:
+                    return self._create_timeline_chart(portfolio_timeline)
+            
+            # Method 2: Use historical data to show how current holdings performed over time
+            if hasattr(tracker, 'historical_values') and tracker.historical_values is not None:
+                portfolio_timeline = self._calculate_historical_portfolio_value(tracker)
+                if portfolio_timeline:
+                    return self._create_timeline_chart(portfolio_timeline)
+            
+            # Method 3: Fallback to current holdings visualization
+            if hasattr(tracker, 'portfolio') and not tracker.portfolio.empty:
                 return self._create_current_holdings_chart(tracker.portfolio)
+            
+            return self._create_empty_chart("No portfolio data available for tracking")
 
         except Exception as e:
             st.error(f"Error creating portfolio worth chart: {str(e)}")
             print(f"[ERROR] Portfolio worth chart failed: {e}")
             return self._create_empty_chart(f"Error: {str(e)}")
+    def _calculate_historical_portfolio_value(self, tracker):
+        """
+        Calculate how current portfolio holdings would have performed historically.
+        This gives proper scale by using actual portfolio quantities with historical prices.
+        """
+        try:
+            portfolio = tracker.portfolio
+            historical_values = tracker.historical_values
+            
+            if isinstance(historical_values, dict):
+                # Check if it's date-based dictionary
+                dates = [k for k in historical_values.keys() if isinstance(k, str) and len(k) >= 8]
+                if not dates:
+                    return []
+                
+                portfolio_timeline = []
+                
+                for date_str in sorted(dates):
+                    try:
+                        parsed_date = pd.to_datetime(date_str, errors='coerce')
+                        if pd.isnull(parsed_date):
+                            continue
+                            
+                        date_data = historical_values[date_str]
+                        total_value = 0.0
+                        valid_assets = 0
+                        
+                        # Calculate portfolio value using CURRENT holdings with HISTORICAL prices
+                        for _, holding in portfolio.iterrows():
+                            symbol = holding['symbol']
+                            current_quantity = holding.get('quantity', 0)
+                            
+                            if symbol and pd.notnull(current_quantity) and current_quantity > 0:
+                                if symbol in date_data:
+                                    try:
+                                        historical_price = float(date_data[symbol])
+                                        asset_value = current_quantity * historical_price
+                                        total_value += asset_value
+                                        valid_assets += 1
+                                    except (ValueError, TypeError):
+                                        continue
+                        
+                        # Only add if we have data for at least some assets
+                        if valid_assets > 0:
+                            portfolio_timeline.append({
+                                'Date': parsed_date,
+                                'Portfolio Value': total_value,
+                                'Assets Tracked': valid_assets
+                            })
+                    
+                    except Exception as e:
+                        print(f"[WARN] Skipped date {date_str}: {e}")
+                        continue
+                
+                return portfolio_timeline
+                
+            elif isinstance(historical_values, pd.DataFrame):
+                return self._calculate_from_dataframe(tracker, historical_values)
+            
+            return []
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to calculate historical portfolio value: {e}")
+            return []
+
+    def _calculate_from_dataframe(self, tracker, df):
+        """Calculate portfolio value from DataFrame format historical data."""
+        try:
+            if 'date' not in df.columns or 'symbol' not in df.columns:
+                return []
+                
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+            df = df.dropna(subset=['date'])
+            
+            portfolio = tracker.portfolio
+            portfolio_timeline = []
+            
+            # Get unique dates
+            for date in sorted(df['date'].unique()):
+                date_data = df[df['date'] == date]
+                total_value = 0.0
+                valid_assets = 0
+                
+                for _, holding in portfolio.iterrows():
+                    symbol = holding['symbol']
+                    current_quantity = holding.get('quantity', 0)
+                    
+                    if symbol and pd.notnull(current_quantity) and current_quantity > 0:
+                        symbol_data = date_data[date_data['symbol'] == symbol]
+                        if not symbol_data.empty:
+                            # Use price if available, otherwise try market_value per share
+                            if 'price' in symbol_data.columns:
+                                price = symbol_data['price'].iloc[0]
+                            elif 'market_value' in symbol_data.columns:
+                                # Assume market_value is total value, need to get per-share
+                                symbol_qty = symbol_data.get('quantity', current_quantity).iloc[0]
+                                if symbol_qty > 0:
+                                    price = symbol_data['market_value'].iloc[0] / symbol_qty
+                                else:
+                                    continue
+                            else:
+                                continue
+                                
+                            try:
+                                asset_value = current_quantity * float(price)
+                                total_value += asset_value
+                                valid_assets += 1
+                            except (ValueError, TypeError):
+                                continue
+                
+                if valid_assets > 0:
+                    portfolio_timeline.append({
+                        'Date': date,
+                        'Portfolio Value': total_value,
+                        'Assets Tracked': valid_assets
+                    })
+            
+            return portfolio_timeline
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to calculate from DataFrame: {e}")
+            return []
+
+        
+    def _build_portfolio_timeline_from_transactions(self, transactions_df):
+        """
+        Build true portfolio value timeline from actual transactions.
+        This tracks when you actually bought/sold assets and shows real performance.
+        """
+        try:
+            df = transactions_df.copy()
+            df = df.dropna(how='all').reset_index(drop=True)
+            
+            # Clean and parse dates
+            df['Activity Date'] = pd.to_datetime(df['Activity Date'], format='%m/%d/%Y', errors='coerce')
+            df = df.dropna(subset=['Activity Date'])
+            
+            # Clean numeric columns
+            df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
+            df['Price'] = pd.to_numeric(df['Price'].astype(str).str.replace('$', '', regex=False), errors='coerce').fillna(0)
+            df['Amount'] = pd.to_numeric(df['Amount'].astype(str).str.replace('$', '', regex=False), errors='coerce').fillna(0)
+            
+            # Sort by date
+            df = df.sort_values('Activity Date')
+            
+            # Track portfolio state over time
+            cash = 0.0
+            holdings = {}  # {asset: shares}
+            current_prices = {}  # Latest known price for each asset
+            portfolio_timeline = []
+            
+            for _, transaction in df.iterrows():
+                date = transaction['Activity Date']
+                trans_code = transaction['Trans Code']
+                instrument = transaction['Instrument']
+                quantity = transaction['Quantity']
+                price = transaction['Price']
+                amount = transaction['Amount']
+                
+                # Update holdings and cash based on transaction type
+                if trans_code == 'Buy':
+                    holdings[instrument] = holdings.get(instrument, 0) + quantity
+                    current_prices[instrument] = price
+                    cash += amount  # Amount is negative for purchases
+                    
+                elif trans_code == 'Sell':
+                    holdings[instrument] = holdings.get(instrument, 0) - quantity
+                    if holdings[instrument] <= 0:
+                        holdings.pop(instrument, None)
+                    current_prices[instrument] = price
+                    cash += amount  # Amount is positive for sales
+                    
+                elif trans_code in ['CDIV', 'RTP', 'ACH']:  # Dividends, transfers
+                    cash += amount
+                    
+                elif trans_code in ['AFEE', 'DTAX']:  # Fees, taxes
+                    cash += amount
+                
+                # Update current price for the instrument
+                if instrument and price > 0:
+                    current_prices[instrument] = price
+                
+                # Calculate total portfolio value at this point in time
+                portfolio_value = cash
+                for asset, shares in holdings.items():
+                    if asset in current_prices:
+                        portfolio_value += shares * current_prices[asset]
+                
+                # Record this portfolio snapshot
+                portfolio_timeline.append({
+                    'Date': date,
+                    'Portfolio Value': portfolio_value,
+                    'Cash': cash,
+                    'Holdings Value': portfolio_value - cash,
+                    'Transaction': f"{trans_code}: {instrument}" if instrument else trans_code
+                })
+            
+            return portfolio_timeline
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to build timeline from transactions: {e}")
+            return []
+        
+    def _extract_actual_portfolio_snapshots(self, historical_values):
+        """
+        Extract actual portfolio snapshots from historical data.
+        This assumes historical_values contains real portfolio snapshots, not reconstructed data.
+        """
+        try:
+            portfolio_timeline = []
+            
+            if isinstance(historical_values, dict):
+                # Check if this looks like date-keyed snapshots
+                date_keys = [k for k in historical_values.keys() if isinstance(k, str) and len(k) >= 8]
+                if date_keys:
+                    for date_str in sorted(date_keys):
+                        try:
+                            date_data = historical_values[date_str]
+                            parsed_date = pd.to_datetime(date_str, errors='coerce')
+                            
+                            if pd.isna(parsed_date):
+                                continue
+                            
+                            # Look for total portfolio value
+                            if isinstance(date_data, dict) and 'total_value' in date_data:
+                                total_value = float(date_data['total_value'])
+                            elif isinstance(date_data, dict) and 'portfolio_value' in date_data:
+                                total_value = float(date_data['portfolio_value'])
+                            elif isinstance(date_data, (int, float)):
+                                total_value = float(date_data)
+                            else:
+                                # Skip this entry if we can't determine portfolio value
+                                continue
+                            
+                            portfolio_timeline.append({
+                                'Date': parsed_date,
+                                'Portfolio Value': total_value
+                            })
+                            
+                        except (ValueError, TypeError) as e:
+                            print(f"[WARN] Skipped snapshot for {date_str}: {e}")
+                            continue
+                            
+            elif isinstance(historical_values, pd.DataFrame):
+                # DataFrame with portfolio snapshots
+                df = historical_values.copy()
+                
+                # Find date and value columns
+                date_col = None
+                value_col = None
+                
+                for col in df.columns:
+                    if 'date' in col.lower():
+                        date_col = col
+                    elif any(term in col.lower() for term in ['total', 'portfolio', 'value', 'worth']):
+                        value_col = col
+                
+                if date_col and value_col:
+                    df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+                    df = df.dropna(subset=[date_col])
+                    
+                    for _, row in df.iterrows():
+                        portfolio_timeline.append({
+                            'Date': row[date_col],
+                            'Portfolio Value': float(row[value_col])
+                        })
+            
+            return portfolio_timeline if portfolio_timeline else []
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to extract portfolio snapshots: {e}")
+            return []
+
+
+    def _calculate_portfolio_value_from_transactions(self, transactions_df):
+        """
+        Calculate portfolio value over time from transaction data.
+        Fixed version that properly handles all transaction types.
+        """
+        try:
+            # Make a copy to avoid modifying the original
+            df = transactions_df.copy()
+            
+            # Clean up the data
+            df = df.dropna(how='all').reset_index(drop=True)
+            
+            # Convert date columns
+            df['Activity Date'] = pd.to_datetime(df['Activity Date'], format='%m/%d/%Y', errors='coerce')
+            df = df.dropna(subset=['Activity Date'])
+            
+            # Convert numeric columns
+            df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
+            df['Price'] = pd.to_numeric(df['Price'].astype(str).str.replace('$', '', regex=False), errors='coerce').fillna(0)
+            df['Amount'] = pd.to_numeric(df['Amount'].astype(str).str.replace('$', '', regex=False), errors='coerce').fillna(0)
+            
+            # Sort by date
+            df = df.sort_values('Activity Date')
+            
+            # Initialize portfolio tracking
+            cash = 0.0
+            holdings = {}
+            portfolio_values = []
+            
+            # Get all unique dates
+            min_date = df['Activity Date'].min()
+            max_date = df['Activity Date'].max()
+            all_dates = pd.date_range(start=min_date, end=max_date)
+            
+            # Create a price history for each asset
+            price_history = {}
+            for asset in df['Instrument'].unique():
+                if asset and asset != '':
+                    asset_data = df[df['Instrument'] == asset].copy()
+                    asset_data = asset_data.sort_values('Activity Date')
+                    price_history[asset] = asset_data.set_index('Activity Date')['Price']
+            
+            # Process each date
+            for date in all_dates:
+                # Get transactions for this date
+                day_transactions = df[df['Activity Date'] == date]
+                
+                # Process each transaction
+                for _, transaction in day_transactions.iterrows():
+                    trans_code = transaction['Trans Code']
+                    instrument = transaction['Instrument']
+                    quantity = transaction['Quantity']
+                    price = transaction['Price']
+                    amount = transaction['Amount']
+                    
+                    # Handle different transaction types
+                    if trans_code == 'Buy':
+                        # Add to holdings
+                        if instrument in holdings:
+                            holdings[instrument] += quantity
+                        else:
+                            holdings[instrument] = quantity
+                        # Update cash (negative amount for purchase)
+                        cash += amount
+                        
+                    elif trans_code == 'Sell':
+                        # Remove from holdings
+                        if instrument in holdings:
+                            holdings[instrument] -= quantity
+                            if holdings[instrument] <= 0:
+                                del holdings[instrument]
+                        # Update cash (positive amount from sale)
+                        cash += amount
+                        
+                    elif trans_code in ['CDIV', 'RTP', 'ACH']:
+                        # Cash dividend or transfer
+                        cash += amount
+                        
+                    elif trans_code in ['AFEE', 'DTAX']:
+                        # Fee or tax
+                        cash += amount
+                
+                # Calculate portfolio value for this date
+                portfolio_value = cash
+                
+                # Add value of all holdings using the latest known price
+                for asset, shares in holdings.items():
+                    if asset in price_history:
+                        # Get the latest price on or before this date
+                        asset_prices = price_history[asset]
+                        if date in asset_prices.index:
+                            current_price = asset_prices.loc[date]
+                        else:
+                            # Find the last price before this date
+                            earlier_prices = asset_prices[asset_prices.index <= date]
+                            if not earlier_prices.empty:
+                                current_price = earlier_prices.iloc[-1]
+                            else:
+                                continue
+                        
+                        portfolio_value += shares * current_price
+                
+                # Record the portfolio value for this date
+                portfolio_values.append({
+                    'Date': date,
+                    'Portfolio Value': portfolio_value
+                })
+            
+            # Convert to DataFrame
+            portfolio_df = pd.DataFrame(portfolio_values)
+            
+            # Calculate percentage change from initial value
+            if not portfolio_df.empty:
+                initial_value = portfolio_df['Portfolio Value'].iloc[0]
+                portfolio_df['Pct Change'] = (portfolio_df['Portfolio Value'] - initial_value) / initial_value * 100
+            
+            return portfolio_df
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to calculate portfolio value: {e}")
+            return pd.DataFrame()
+
+
 
     def _create_historical_worth_chart(self, tracker, historical_data: pd.DataFrame = None) -> go.Figure:
         """
@@ -163,36 +569,104 @@ class PortfolioCharts:
             print(f"[ERROR] DataFrame chart creation failed: {e}")
             return self._create_current_holdings_chart(tracker.portfolio)
 
-    def _create_timeline_chart(self, portfolio_timeline):
+    def _create_timeline_chart(self, portfolio_data):
         """
-        Plots the actual portfolio value timeline (and optional % change).
-        Handles sorting, duplicates, and dual y-axis for % change.
+        Create timeline chart from portfolio data with proper scaling.
         """
         try:
-            df = pd.DataFrame(portfolio_timeline).drop_duplicates(subset=['date'])
-            df = df.sort_values('date')
-
+            if not portfolio_data:
+                return self._create_empty_chart("No timeline data available")
+            
+            # Convert to DataFrame
+            if isinstance(portfolio_data, list):
+                df = pd.DataFrame(portfolio_data)
+            else:
+                df = portfolio_data.copy()
+            
+            # Ensure proper column names
+            if 'Date' not in df.columns:
+                if 'date' in df.columns:
+                    df = df.rename(columns={'date': 'Date'})
+                else:
+                    return self._create_empty_chart("No date column found")
+            
+            if 'Portfolio Value' not in df.columns:
+                if 'Portfolio_Value' in df.columns:
+                    df = df.rename(columns={'Portfolio_Value': 'Portfolio Value'})
+                elif 'total_value' in df.columns:
+                    df = df.rename(columns={'total_value': 'Portfolio Value'})
+                elif 'portfolio_value' in df.columns:
+                    df = df.rename(columns={'portfolio_value': 'Portfolio Value'})
+                else:
+                    return self._create_empty_chart("No portfolio value column found")
+            
+            # Clean and sort data
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+            df = df.dropna(subset=['Date', 'Portfolio Value'])
+            df = df.sort_values('Date')
+            
+            if df.empty:
+                return self._create_empty_chart("No valid portfolio timeline data")
+            
+            # Calculate percentage change from first value
+            first_value = df['Portfolio Value'].iloc[0]
+            if first_value > 0:
+                df['Pct Change'] = ((df['Portfolio Value'] - first_value) / first_value) * 100
+            
             fig = go.Figure()
-
-            # Main value line
+            
+            # Main portfolio value line
             fig.add_trace(go.Scatter(
-                x=df['date'], y=df['total_value'], mode='lines+markers',
-                name='Portfolio Value', line=dict(color='#1f77b4', width=3),
-                hovertemplate="Date: %{x|%Y-%m-%d}<br>Value: $%{y:,.2f}<extra></extra>"
+                x=df['Date'], 
+                y=df['Portfolio Value'], 
+                mode='lines+markers',
+                name='Portfolio Value', 
+                line=dict(color='#1f77b4', width=3),
+                marker=dict(size=4),
+                hovertemplate="<b>Portfolio Value</b><br>" +
+                            "Date: %{x|%B %d, %Y}<br>" +
+                            "Value: $%{y:,.2f}<extra></extra>"
             ))
-
-            # Optional % change line
-            if len(df) > 1:
-                start_value = df.iloc[0]['total_value']
-                if start_value > 0:
-                    df['pct_change'] = (df['total_value'] - start_value) / start_value * 100
-                    fig.add_trace(go.Scatter(
-                        x=df['date'], y=df['pct_change'], mode='lines',
-                        name='% Change', yaxis='y2',
-                        line=dict(color='#ff7f0e', dash='dash'),
-                        hovertemplate="Date: %{x|%Y-%m-%d}<br>Change: %{y:.2f}%<extra></extra>"
-                    ))
-
+            
+            # Add percentage change on secondary axis if we have multiple points
+            if len(df) > 1 and 'Pct Change' in df.columns:
+                fig.add_trace(go.Scatter(
+                    x=df['Date'], 
+                    y=df['Pct Change'], 
+                    mode='lines',
+                    name='% Change from Start', 
+                    yaxis='y2',
+                    line=dict(color='#ff7f0e', dash='dash', width=2),
+                    hovertemplate="<b>Performance</b><br>" +
+                                "Date: %{x|%B %d, %Y}<br>" +
+                                "Change: %{y:.2f}%<extra></extra>"
+                ))
+            
+            # Add breakdown traces if available
+            if 'Cash' in df.columns and 'Holdings Value' in df.columns:
+                fig.add_trace(go.Scatter(
+                    x=df['Date'],
+                    y=df['Cash'],
+                    mode='lines',
+                    name='Cash',
+                    line=dict(color='green', dash='dot'),
+                    hovertemplate="<b>Cash</b><br>" +
+                                "Date: %{x|%B %d, %Y}<br>" +
+                                "Cash: $%{y:,.2f}<extra></extra>"
+                ))
+                
+                fig.add_trace(go.Scatter(
+                    x=df['Date'],
+                    y=df['Holdings Value'],
+                    mode='lines',
+                    name='Holdings Value',
+                    line=dict(color='purple', dash='dot'),
+                    hovertemplate="<b>Holdings</b><br>" +
+                                "Date: %{x|%B %d, %Y}<br>" +
+                                "Holdings: $%{y:,.2f}<extra></extra>"
+                ))
+            
+            # Update layout with proper formatting
             fig.update_layout(
                 title='Portfolio Value Over Time',
                 xaxis_title='Date',
@@ -202,19 +676,35 @@ class PortfolioCharts:
                 height=600,
                 hovermode='x unified'
             )
-
-            if 'pct_change' in df.columns:
+            
+            # Add secondary y-axis for percentage change
+            if len(df) > 1 and 'Pct Change' in df.columns:
                 fig.update_layout(
-                    yaxis2=dict(title='% Change', overlaying='y', side='right', ticksuffix='%')
+                    yaxis2=dict(
+                        title='% Change from Start',
+                        overlaying='y',
+                        side='right',
+                        ticksuffix='%',
+                        showgrid=False
+                    )
                 )
-
-            fig.update_yaxes(tickformat='$,.0f')
+            
+            # Format primary y-axis with proper scaling
+            max_val = df['Portfolio Value'].max()
+            if max_val > 1000000:
+                fig.update_yaxes(tickformat='$,.0f')
+            elif max_val > 1000:
+                fig.update_yaxes(tickformat='$,.0f')
+            else:
+                fig.update_yaxes(tickformat='$,.2f')
+            
             return fig
 
         except Exception as e:
-            print(f"[ERROR] Timeline chart failed: {e}")
+            print(f"[ERROR] Timeline chart creation failed: {e}")
             return self._create_empty_chart(f"Timeline Error: {e}")
 
+        
     # -------------------------
     # Current Holdings Chart
     # -------------------------
@@ -482,29 +972,73 @@ class PortfolioCharts:
                 st.warning("No historical data available for composition chart")
                 return self._create_empty_chart("No Historical Data Available")
             
-            portfolio = tracker.portfolio
-            historical_values = tracker.historical_values
+            composition_data = self._calculate_proper_composition(tracker)
             
-            # Handle different data structures
-            if isinstance(historical_values, dict):
-                dates = [k for k in historical_values.keys() if isinstance(k, str) and len(k) >= 8]
-                if dates:
-                    return self._create_composition_from_dates(portfolio, historical_values, dates)
-                elif 'date' in historical_values:
-                    try:
-                        df = pd.DataFrame(historical_values)
-                        return self._create_composition_from_df(portfolio, df)
-                    except:
-                        pass
-            elif isinstance(historical_values, pd.DataFrame):
-                return self._create_composition_from_df(portfolio, historical_values)
+            if not composition_data:
+                return self._create_empty_chart("No valid composition data")
             
-            return self._create_empty_chart("Cannot process historical data for composition")
+            return self._create_composition_chart(composition_data)
             
         except Exception as e:
             st.error(f"Error creating composition chart: {str(e)}")
             print(f"Composition chart error: {e}")
             return self._create_empty_chart(f"Composition Error: {str(e)}")
+
+    def _calculate_proper_composition(self, tracker):
+        """Calculate proper portfolio composition over time."""
+        try:
+            portfolio = tracker.portfolio
+            historical_values = tracker.historical_values
+            composition_data = []
+            
+            if isinstance(historical_values, dict):
+                dates = [k for k in historical_values.keys() if isinstance(k, str) and len(k) >= 8]
+                
+                for date_str in sorted(dates):
+                    try:
+                        parsed_date = pd.to_datetime(date_str, errors='coerce')
+                        if pd.isnull(parsed_date):
+                            continue
+                            
+                        date_data = historical_values[date_str]
+                        
+                        total_value = 0.0
+                        asset_values = {}
+                        
+                        # First pass: calculate total portfolio value and individual asset values
+                        for _, holding in portfolio.iterrows():
+                            symbol = holding['symbol']
+                            current_quantity = holding.get('quantity', 0)
+                            
+                            if symbol and pd.notnull(current_quantity) and current_quantity > 0:
+                                if symbol in date_data:
+                                    try:
+                                        historical_price = float(date_data[symbol])
+                                        asset_value = current_quantity * historical_price
+                                        asset_values[symbol] = asset_value
+                                        total_value += asset_value
+                                    except (ValueError, TypeError):
+                                        continue
+                        
+                        # Second pass: calculate percentages
+                        if total_value > 0 and asset_values:
+                            composition_record = {'date': parsed_date}
+                            
+                            # Add each asset's percentage
+                            for symbol, value in asset_values.items():
+                                composition_record[symbol] = (value / total_value) * 100
+                            
+                            composition_data.append(composition_record)
+                    
+                    except Exception as e:
+                        print(f"Error processing composition for date {date_str}: {e}")
+                        continue
+            
+            return composition_data
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to calculate proper composition: {e}")
+            return []
     
     def _create_composition_from_dates(self, portfolio, historical_values, dates):
         """Create composition chart from date-based historical values"""
@@ -569,13 +1103,90 @@ class PortfolioCharts:
             if not composition_data:
                 return self._create_empty_chart("No valid composition data")
             
-            return self._create_composition_chart(composition_data)
+            return self._create__composition_chart(composition_data)
             
         except Exception as e:
             print(f"Error in _create_composition_from_dates: {e}")
             return self._create_empty_chart(f"Composition Error: {str(e)}")
 
-    
+    def _create__composition_chart(self, composition_data):
+        """Create the actual fixed composition stacked area chart."""
+        try:
+            composition_df = pd.DataFrame(composition_data)
+            composition_df = composition_df.sort_values('date')
+            
+            # Fill NaN values with 0
+            composition_df = composition_df.fillna(0)
+            
+            # Get symbols (exclude date column)
+            symbols = [col for col in composition_df.columns if col != 'date']
+            
+            # Limit to top holdings to avoid overcrowding
+            if len(symbols) > 20:
+                # Calculate average allocation for each symbol
+                avg_allocations = {}
+                for symbol in symbols:
+                    avg_allocations[symbol] = composition_df[symbol].mean()
+                
+                # Keep top 15 holdings, group rest as "Others"
+                top_symbols = sorted(avg_allocations.items(), key=lambda x: x[1], reverse=True)[:15]
+                keep_symbols = [s[0] for s in top_symbols]
+                other_symbols = [s for s in symbols if s not in keep_symbols]
+                
+                if other_symbols:
+                    composition_df['Others'] = composition_df[other_symbols].sum(axis=1)
+                    composition_df = composition_df[['date'] + keep_symbols + ['Others']]
+                    symbols = keep_symbols + ['Others']
+                else:
+                    symbols = keep_symbols
+            
+            # Create stacked area chart
+            fig = go.Figure()
+            
+            # Use a better color palette
+            colors = px.colors.qualitative.Set3 + px.colors.qualitative.Pastel + px.colors.qualitative.Set1
+            
+            for i, symbol in enumerate(symbols):
+                fig.add_trace(go.Scatter(
+                    x=composition_df['date'],
+                    y=composition_df[symbol],
+                    fill='tonexty' if i > 0 else 'tozeroy',
+                    mode='none',
+                    name=symbol,
+                    fillcolor=colors[i % len(colors)],
+                    stackgroup='one',  # This ensures proper stacking
+                    hovertemplate=f"<b>{symbol}</b><br>" +
+                                "Date: %{x|%Y-%m-%d}<br>" +
+                                "Allocation: %{y:.1f}%<br>" +
+                                "<extra></extra>"
+                ))
+            
+            fig.update_layout(
+                title='Portfolio Composition Over Time',
+                xaxis_title='Date',
+                yaxis_title='Allocation (%)',
+                template=self.template,
+                width=900,
+                height=600,
+                hovermode='x unified',
+                legend=dict(
+                    orientation="v",
+                    yanchor="top",
+                    y=1,
+                    xanchor="left",
+                    x=1.02
+                )
+            )
+            
+            # Fix y-axis to show 0-100%
+            fig.update_yaxes(range=[0, 100], ticksuffix='%')
+            
+            return fig
+            
+        except Exception as e:
+            print(f"[ERROR] Fixed composition chart creation failed: {e}")
+            return self._create_empty_chart(f"Composition Chart Error: {str(e)}")
+
     def _create_composition_from_df(self, portfolio, df):
         """Create composition chart from DataFrame"""
         try:
@@ -658,13 +1269,7 @@ class PortfolioCharts:
     
     def create_portfolio_metrics_dashboard(self, tracker) -> go.Figure:
         """
-        Create a dashboard with key portfolio metrics over time
-        
-        Args:
-            tracker: Portfolio tracker with historical data
-            
-        Returns:
-            Plotly figure with subplots showing various metrics
+        Create a FIXED dashboard with key portfolio metrics over time.
         """
         try:
             if (not hasattr(tracker, 'historical_values') or 
@@ -673,44 +1278,33 @@ class PortfolioCharts:
                 st.warning("No historical data available for metrics dashboard")
                 return self._create_empty_chart("No Historical Data Available")
             
-            portfolio = tracker.portfolio
-            historical_values = tracker.historical_values
-            
-            # Handle different data structures
-            metrics_data = []
-            
-            if isinstance(historical_values, dict):
-                dates = [k for k in historical_values.keys() if isinstance(k, str) and len(k) >= 8]
-                if dates:
-                    metrics_data = self._calculate_metrics_from_dates(portfolio, historical_values, dates)
-                elif 'date' in historical_values:
-                    try:
-                        df = pd.DataFrame(historical_values)
-                        metrics_data = self._calculate_metrics_from_df(portfolio, df)
-                    except:
-                        pass
-            elif isinstance(historical_values, pd.DataFrame):
-                metrics_data = self._calculate_metrics_from_df(portfolio, historical_values)
+            # Calculate metrics properly
+            metrics_data = self._calculate_proper_metrics(tracker)
             
             if not metrics_data:
                 return self._create_empty_chart("No valid metrics data")
             
             metrics_df = pd.DataFrame(metrics_data)
+            metrics_df = metrics_df.sort_values('date')
             
             # Create subplots
             fig = make_subplots(
                 rows=2, cols=2,
-                subplot_titles=('Portfolio Value', 'Number of Holdings', 
+                subplot_titles=('Portfolio Value ($)', 'Number of Holdings', 
                               'Concentration Index (HHI)', 'Diversification Score'),
                 specs=[[{'secondary_y': False}, {'secondary_y': False}],
-                       [{'secondary_y': False}, {'secondary_y': False}]]
+                       [{'secondary_y': False}, {'secondary_y': False}]],
+                vertical_spacing=0.12,
+                horizontal_spacing=0.1
             )
             
-            # Portfolio Value
+            # Portfolio Value - with proper scaling
             fig.add_trace(
                 go.Scatter(x=metrics_df['date'], y=metrics_df['total_value'],
                           mode='lines+markers', name='Portfolio Value',
-                          line=dict(color='blue')),
+                          line=dict(color='blue', width=2),
+                          marker=dict(size=4),
+                          hovertemplate="Date: %{x|%Y-%m-%d}<br>Value: $%{y:,.2f}<extra></extra>"),
                 row=1, col=1
             )
             
@@ -718,23 +1312,29 @@ class PortfolioCharts:
             fig.add_trace(
                 go.Scatter(x=metrics_df['date'], y=metrics_df['num_holdings'],
                           mode='lines+markers', name='Holdings Count',
-                          line=dict(color='green')),
+                          line=dict(color='green', width=2),
+                          marker=dict(size=4),
+                          hovertemplate="Date: %{x|%Y-%m-%d}<br>Holdings: %{y}<extra></extra>"),
                 row=1, col=2
             )
             
-            # Concentration Index
+            # Concentration Index (bounded between 0 and 1)
             fig.add_trace(
                 go.Scatter(x=metrics_df['date'], y=metrics_df['concentration_hhi'],
                           mode='lines+markers', name='HHI',
-                          line=dict(color='orange')),
+                          line=dict(color='orange', width=2),
+                          marker=dict(size=4),
+                          hovertemplate="Date: %{x|%Y-%m-%d}<br>HHI: %{y:.4f}<extra></extra>"),
                 row=2, col=1
             )
             
-            # Diversification Score
+            # Diversification Score (0-1, where 1 is most diversified)
             fig.add_trace(
                 go.Scatter(x=metrics_df['date'], y=metrics_df['diversification_score'],
                           mode='lines+markers', name='Diversification',
-                          line=dict(color='purple')),
+                          line=dict(color='purple', width=2),
+                          marker=dict(size=4),
+                          hovertemplate="Date: %{x|%Y-%m-%d}<br>Diversification: %{y:.4f}<extra></extra>"),
                 row=2, col=2
             )
             
@@ -745,8 +1345,11 @@ class PortfolioCharts:
                 showlegend=False
             )
             
-            # Update y-axis format for portfolio value
-            fig.update_yaxes(tickformat='$,.0f', row=1, col=1)
+            # Update y-axis formats
+            fig.update_yaxes(tickformat='$,.0f', row=1, col=1)  # Portfolio value
+            fig.update_yaxes(range=[0, max(metrics_df['num_holdings']) + 1], row=1, col=2)  # Holdings count
+            fig.update_yaxes(range=[0, 1], tickformat='.3f', row=2, col=1)  # HHI
+            fig.update_yaxes(range=[0, 1], tickformat='.3f', row=2, col=2)  # Diversification
             
             return fig
             
@@ -754,6 +1357,71 @@ class PortfolioCharts:
             st.error(f"Error creating metrics dashboard: {str(e)}")
             print(f"Metrics dashboard error: {e}")
             return self._create_empty_chart(f"Metrics Error: {str(e)}")
+        
+    def _calculate_proper_metrics(self, tracker):
+        """Calculate proper portfolio metrics over time."""
+        try:
+            portfolio = tracker.portfolio
+            historical_values = tracker.historical_values
+            metrics_data = []
+            
+            if isinstance(historical_values, dict):
+                dates = [k for k in historical_values.keys() if isinstance(k, str) and len(k) >= 8]
+                
+                for date_str in sorted(dates):
+                    try:
+                        parsed_date = pd.to_datetime(date_str, errors='coerce')
+                        if pd.isnull(parsed_date):
+                            continue
+                            
+                        date_data = historical_values[date_str]
+                        
+                        total_value = 0.0
+                        asset_values = []
+                        valid_holdings = 0
+                        
+                        # Calculate for each holding
+                        for _, holding in portfolio.iterrows():
+                            symbol = holding['symbol']
+                            current_quantity = holding.get('quantity', 0)
+                            
+                            if symbol and pd.notnull(current_quantity) and current_quantity > 0:
+                                if symbol in date_data:
+                                    try:
+                                        historical_price = float(date_data[symbol])
+                                        asset_value = current_quantity * historical_price
+                                        total_value += asset_value
+                                        asset_values.append(asset_value)
+                                        valid_holdings += 1
+                                    except (ValueError, TypeError):
+                                        continue
+                        
+                        # Calculate concentration metrics only if we have valid data
+                        if total_value > 0 and asset_values and valid_holdings > 0:
+                            # Herfindahl-Hirschman Index (concentration)
+                            concentrations = [(value / total_value) ** 2 for value in asset_values]
+                            hhi = sum(concentrations)
+                            
+                            # Diversification score (inverse of concentration)
+                            diversification_score = 1 - hhi
+                            
+                            metrics_data.append({
+                                'date': parsed_date,
+                                'total_value': total_value,
+                                'num_holdings': valid_holdings,
+                                'concentration_hhi': hhi,
+                                'diversification_score': max(0, diversification_score)
+                            })
+                    
+                    except Exception as e:
+                        print(f"Error processing metrics for date {date_str}: {e}")
+                        continue
+            
+            return metrics_data
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to calculate proper metrics: {e}")
+            return []
     
     def _calculate_metrics_from_dates(self, portfolio, historical_values, dates):
         """Calculate metrics from date-based historical values"""
@@ -1240,7 +1908,15 @@ class PortfolioCharts:
                 hovertemplate="<b>%{y} vs %{x}</b><br>" +
                             "Correlation: %{z:.3f}<extra></extra>"
             ))
-            
+            for i, row in enumerate(correlation_matrix.index):
+                for j, col in enumerate(correlation_matrix.columns):
+                    fig.add_annotation(
+                        x=col,
+                        y=row,
+                        text=str(round(correlation_matrix.iloc[i, j], 3)),
+                        showarrow=False,
+                        font=dict(color="yellow", size=12)  # Your desired color
+                        )
             fig.update_layout(
                 title='Asset Correlation Matrix',
                 template=self.template,
