@@ -76,8 +76,6 @@ Vault Investment/
 └── README.md                    # Documentation
 ```
 
-````
-
 ---
 
 ## Installation
@@ -172,4 +170,7 @@ This tool is for **informational purposes only**. While designed with care, it m
 - Expanded documentation
 - Automated testing
 - Cloud deployment (Heroku, AWS, Azure)
-````
+
+```
+
+```
