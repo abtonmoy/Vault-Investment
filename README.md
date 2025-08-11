@@ -85,8 +85,8 @@ Vault Investment/
 ### 1️⃣ Clone the repository
 
 ```bash
-git clone https://github.com/abtonmoy/vault-finance.git
-cd Vault-finance
+git clone https://github.com/abtonmoy/vault-Investment.git
+cd Vault-Investment
 ```
 
 ### 2️⃣ Create a virtual environment (recommended)
