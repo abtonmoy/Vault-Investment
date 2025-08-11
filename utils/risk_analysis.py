@@ -5,6 +5,8 @@ import pandas as pd
 import numpy as np
 from utils import helpers
 from utils.theme import THEME_COLORS, THEME_GRADIENTS
+from plotly.subplots import make_subplots
+
 
 # Define consistent color palettes from theme
 CHART_COLORS = [
@@ -690,6 +692,657 @@ def render_risk_analysis(tracker):
             st.plotly_chart(correlation_fig, use_container_width=True)
     
     with col4:
+        beta_fig = beta_analysis_chart(clean_portfolio, tracker.historical_values)
+        if beta_fig:
+            st.plotly_chart(beta_fig, use_container_width=True)
+
+def individual_asset_risk_return_scatter(portfolio_df, historical_values):
+    """Create individual asset risk vs return scatter plot"""
+    if historical_values.empty or portfolio_df.empty:
+        return None
+
+    # Calculate risk and return metrics for each asset
+    asset_metrics = []
+    symbols = portfolio_df['symbol'].unique()
+    
+    # Remove PORTFOLIO_TOTAL from individual asset analysis
+    symbols = [s for s in symbols if s != 'PORTFOLIO_TOTAL']
+    
+    for symbol in symbols:
+        symbol_data = historical_values[
+            historical_values['symbol'] == symbol
+        ].copy()
+        
+        if len(symbol_data) > 20:  # Need sufficient data
+            symbol_data['date'] = pd.to_datetime(symbol_data['date'])
+            symbol_data = symbol_data.sort_values('date')
+            symbol_data['returns'] = symbol_data['market_value'].pct_change()
+            
+            clean_returns = symbol_data['returns'].dropna()
+            
+            if len(clean_returns) > 10:
+                # Get portfolio weight
+                portfolio_row = portfolio_df[portfolio_df['symbol'] == symbol]
+                if not portfolio_row.empty:
+                    market_value = portfolio_row['market_value'].iloc[0]
+                    total_portfolio_value = portfolio_df[
+                        portfolio_df['symbol'] != 'PORTFOLIO_TOTAL'
+                    ]['market_value'].sum()
+                    
+                    weight = market_value / total_portfolio_value if total_portfolio_value > 0 else 0
+                    
+                    # Calculate metrics
+                    annualized_return = clean_returns.mean() * 252
+                    annualized_volatility = clean_returns.std() * np.sqrt(252)
+                    
+                    asset_metrics.append({
+                        'symbol': symbol,
+                        'return': annualized_return,
+                        'volatility': annualized_volatility,
+                        'weight': weight,
+                        'market_value': market_value
+                    })
+    
+    if len(asset_metrics) < 2:
+        return None
+    
+    metrics_df = pd.DataFrame(asset_metrics)
+    
+    # Theme colors for scatter plot
+    scatter_colors = [
+        "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7", 
+        "#DDA0DD", "#98D8C8", "#F7DC6F", "#BB8FCE", "#85C1E9"
+    ]
+    
+    # Create scatter plot
+    fig = px.scatter(
+        metrics_df,
+        x='volatility',
+        y='return',
+        size='weight',
+        color='symbol',
+        hover_name='symbol',
+        title='Individual Asset Risk vs Return Analysis',
+        labels={
+            'volatility': 'Annualized Volatility',
+            'return': 'Annualized Return'
+        },
+        color_discrete_sequence=scatter_colors
+    )
+    
+    # Update marker styling
+    fig.update_traces(
+        marker=dict(
+            line=dict(width=2, color='white'),
+            opacity=0.8,
+            sizemin=10
+        )
+    )
+    
+    # Add quadrant guide lines
+    median_volatility = metrics_df['volatility'].median()
+    median_return = metrics_df['return'].median()
+    
+    fig.add_hline(
+        y=median_return,
+        line_dash="dash",
+        line_color="rgba(255,255,255,0.6)",
+        line_width=2,
+        annotation_text="Median Return",
+        annotation_position="bottom right"
+    )
+    fig.add_vline(
+        x=median_volatility,
+        line_dash="dash",
+        line_color="rgba(255,255,255,0.6)",
+        line_width=2,
+        annotation_text="Median Risk",
+        annotation_position="top left"
+    )
+
+    fig.update_layout(
+        title=dict(
+            font=dict(size=18, color='white'),
+            x=0.5
+        ),
+        xaxis=dict(
+            title=dict(text='Annualized Volatility', font=dict(color='white')),
+            tickfont=dict(color='white'),
+            gridcolor="rgba(255,255,255,0.1)",
+            tickformat=".1%"
+        ),
+        yaxis=dict(
+            title=dict(text='Annualized Return', font=dict(color='white')),
+            tickfont=dict(color='white'),
+            gridcolor="rgba(255,255,255,0.1)",
+            tickformat=".1%"
+        ),
+        legend=dict(
+            font=dict(color='white'),
+            yanchor="top",
+            y=0.99,
+            xanchor="right",
+            x=0.99
+        ),
+        paper_bgcolor='#053B2A',
+        plot_bgcolor='#053B2A',
+        font=dict(color='white')
+    )
+
+    return fig
+
+
+def portfolio_return_vs_drawdown_chart(historical_values):
+    """Create portfolio return vs drawdown relationship chart"""
+    if historical_values.empty:
+        return None
+
+    # Focus on total portfolio value
+    portfolio_history = historical_values[
+        historical_values['symbol'] == 'PORTFOLIO_TOTAL'
+    ].copy()
+    
+    if portfolio_history.empty or len(portfolio_history) < 30:
+        return None
+
+    portfolio_history['date'] = pd.to_datetime(portfolio_history['date'])
+    portfolio_history = portfolio_history.sort_values('date')
+    
+    # Calculate returns and drawdowns
+    portfolio_history['returns'] = portfolio_history['market_value'].pct_change()
+    portfolio_history['running_max'] = portfolio_history['market_value'].expanding().max()
+    portfolio_history['drawdown'] = (
+        portfolio_history['market_value'] / portfolio_history['running_max'] - 1
+    ) * 100
+    
+    # Calculate cumulative returns for visualization
+    portfolio_history['cumulative_returns'] = (1 + portfolio_history['returns']).cumprod() - 1
+    portfolio_history['cumulative_returns_pct'] = portfolio_history['cumulative_returns'] * 100
+    
+    # Remove NaN values
+    clean_data = portfolio_history.dropna()
+    
+    if clean_data.empty:
+        return None
+    
+    # Create subplot with secondary y-axis
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=('Portfolio Cumulative Returns', 'Portfolio Drawdown'),
+        row_width=[0.7, 0.3]
+    )
+    
+    # Add cumulative returns (top plot)
+    fig.add_trace(
+        go.Scatter(
+            x=clean_data['date'],
+            y=clean_data['cumulative_returns_pct'],
+            mode='lines',
+            name='Cumulative Returns',
+            line=dict(color='#15577A', width=3),
+            fill='tonexty',
+            fillcolor='rgba(52, 152, 219, 0.3)',
+            hovertemplate="<b>Cumulative Return</b><br>Date: %{x}<br>Return: %{y:.2f}%<extra></extra>"
+        ),
+        row=1, col=1
+    )
+    
+    # Add drawdown (bottom plot)
+    fig.add_trace(
+        go.Scatter(
+            x=clean_data['date'],
+            y=clean_data['drawdown'],
+            mode='lines',
+            name='Drawdown',
+            line=dict(color='#DE2C2C', width=2),
+            fill='tonexty',
+            fillcolor='rgba(231, 76, 60, 0.3)',
+            hovertemplate="<b>Drawdown</b><br>Date: %{x}<br>Drawdown: %{y:.2f}%<extra></extra>"
+        ),
+        row=2, col=1
+    )
+    
+    # Add zero lines
+    fig.add_hline(y=0, line_color="rgba(255,255,255,0.6)", line_width=1, row=1, col=1)
+    fig.add_hline(y=0, line_color="rgba(255,255,255,0.6)", line_width=1, row=2, col=1)
+    
+    # Highlight maximum drawdown
+    max_dd_idx = clean_data['drawdown'].idxmin()
+    max_drawdown_point = clean_data.loc[max_dd_idx]
+    
+    fig.add_trace(
+        go.Scatter(
+            x=[max_drawdown_point['date']],
+            y=[max_drawdown_point['drawdown']],
+            mode='markers',
+            name='Max Drawdown',
+            marker=dict(color='white', size=15, symbol='circle', 
+                       line=dict(color='#DE2C2C', width=2)),
+            hovertemplate=f"<b>Maximum Drawdown</b><br>Date: {max_drawdown_point['date']}<br>Drawdown: {max_drawdown_point['drawdown']:.2f}%<extra></extra>"
+        ),
+        row=2, col=1
+    )
+    
+    # Calculate correlation
+    correlation = clean_data['returns'].corr(clean_data['drawdown'])
+    
+    # Update layout
+    fig.update_layout(
+        title=dict(
+            text=f'Portfolio Return vs Drawdown Analysis (Correlation: {correlation:.3f})',
+            font=dict(size=16, color='white'),
+            x=0.5
+        ),
+        paper_bgcolor='#053B2A',
+        plot_bgcolor='#053B2A',
+        font=dict(color='white'),
+        legend=dict(font=dict(color='white')),
+        height=600
+    )
+    
+    # Update axes
+    fig.update_xaxes(
+        title_text='Date',
+        title_font=dict(color='white'),
+        tickfont=dict(color='white'),
+        gridcolor="rgba(255,255,255,0.1)",
+        row=2, col=1
+    )
+    
+    fig.update_yaxes(
+        title_text='Cumulative Return (%)',
+        title_font=dict(color='white'),
+        tickfont=dict(color='white'),
+        gridcolor="rgba(255,255,255,0.1)",
+        row=1, col=1
+    )
+    
+    fig.update_yaxes(
+        title_text='Drawdown (%)',
+        title_font=dict(color='white'),
+        tickfont=dict(color='white'),
+        gridcolor="rgba(255,255,255,0.1)",
+        row=2, col=1
+    )
+
+    return fig
+
+
+def portfolio_return_vs_drawdown_chart(historical_values):
+    """Create portfolio return vs drawdown relationship chart"""
+    if historical_values.empty:
+        return None
+
+    # Focus on total portfolio value
+    portfolio_history = historical_values[
+        historical_values['symbol'] == 'PORTFOLIO_TOTAL'
+    ].copy()
+    
+    if portfolio_history.empty or len(portfolio_history) < 30:
+        return None
+
+    portfolio_history['date'] = pd.to_datetime(portfolio_history['date'])
+    portfolio_history = portfolio_history.sort_values('date')
+    
+    # Calculate returns and drawdowns
+    portfolio_history['returns'] = portfolio_history['market_value'].pct_change()
+    portfolio_history['running_max'] = portfolio_history['market_value'].expanding().max()
+    portfolio_history['drawdown'] = (
+        portfolio_history['market_value'] / portfolio_history['running_max'] - 1
+    ) * 100
+    
+    # Calculate cumulative returns for visualization
+    portfolio_history['cumulative_returns'] = (1 + portfolio_history['returns']).cumprod() - 1
+    portfolio_history['cumulative_returns_pct'] = portfolio_history['cumulative_returns'] * 100
+    
+    # Remove NaN values
+    clean_data = portfolio_history.dropna()
+    
+    if clean_data.empty:
+        return None
+    
+    # Create subplot with secondary y-axis
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=('Portfolio Cumulative Returns', 'Portfolio Drawdown'),
+        row_width=[0.7, 0.3]
+    )
+    
+    # Add cumulative returns (top plot)
+    fig.add_trace(
+        go.Scatter(
+            x=clean_data['date'],
+            y=clean_data['cumulative_returns_pct'],
+            mode='lines',
+            name='Cumulative Returns',
+            line=dict(color=THEME_COLORS["lapis_lazuli"], width=3),
+            fill='tonexty',
+            fillcolor='rgba(52, 152, 219, 0.3)',
+            hovertemplate="<b>Cumulative Return</b><br>Date: %{x}<br>Return: %{y:.2f}%<extra></extra>"
+        ),
+        row=1, col=1
+    )
+    
+    # Add zero line for returns
+    fig.add_hline(
+        y=0,
+        line_color="rgba(255,255,255,0.6)",
+        line_width=1,
+        row=1, col=1
+    )
+    
+    # Add drawdown (bottom plot)
+    fig.add_trace(
+        go.Scatter(
+            x=clean_data['date'],
+            y=clean_data['drawdown'],
+            mode='lines',
+            name='Drawdown',
+            line=dict(color=THEME_COLORS["rojo"], width=2),
+            fill='tonexty',
+            fillcolor='rgba(231, 76, 60, 0.3)',
+            hovertemplate="<b>Drawdown</b><br>Date: %{x}<br>Drawdown: %{y:.2f}%<extra></extra>"
+        ),
+        row=2, col=1
+    )
+    
+    # Add zero line for drawdowns
+    fig.add_hline(
+        y=0,
+        line_color="rgba(255,255,255,0.6)",
+        line_width=1,
+        row=2, col=1
+    )
+    
+    # Highlight maximum drawdown
+    max_dd_idx = clean_data['drawdown'].idxmin()
+    max_drawdown_point = clean_data.loc[max_dd_idx]
+    
+    fig.add_trace(
+        go.Scatter(
+            x=[max_drawdown_point['date']],
+            y=[max_drawdown_point['drawdown']],
+            mode='markers',
+            name='Max Drawdown',
+            marker=dict(color='white', size=15, symbol='circle', 
+                       line=dict(color=THEME_COLORS["rojo"], width=2)),
+            hovertemplate=f"<b>Maximum Drawdown</b><br>Date: {max_drawdown_point['date']}<br>Drawdown: {max_drawdown_point['drawdown']:.2f}%<extra></extra>"
+        ),
+        row=2, col=1
+    )
+    
+    # Calculate correlation between returns and drawdowns for insight
+    correlation = clean_data['returns'].corr(clean_data['drawdown'])
+    
+    # Update layout
+    fig.update_layout(
+        title=dict(
+            text=f'Portfolio Return vs Drawdown Analysis (Correlation: {correlation:.3f})',
+            font=dict(size=18, color='white'),
+            x=0.5
+        ),
+        paper_bgcolor=THEME_COLORS["dark_green"],
+        plot_bgcolor=THEME_COLORS["dark_green"],
+        font=dict(color='white'),
+        legend=dict(
+            font=dict(color='white'),
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        height=600,
+        annotations=[
+            dict(
+                x=0.02, y=0.98,
+                xref='paper', yref='paper',
+                text=f'<b>Key Metrics:</b><br>• Max Return: {clean_data["cumulative_returns_pct"].max():.2f}%<br>• Max Drawdown: {clean_data["drawdown"].min():.2f}%<br>• Return-Drawdown Correlation: {correlation:.3f}',
+                showarrow=False,
+                font=dict(size=11, color='white'),
+                bgcolor='rgba(0,0,0,0.7)',
+                bordercolor='white',
+                borderwidth=1
+            )
+        ]
+    )
+    
+    # Update x-axes
+    fig.update_xaxes(
+        title_text='Date',
+        title_font=dict(color='white'),
+        tickfont=dict(color='white'),
+        gridcolor="rgba(255,255,255,0.1)",
+        row=2, col=1
+    )
+    
+    # Update y-axes
+    fig.update_yaxes(
+        title_text='Cumulative Return (%)',
+        title_font=dict(color='white'),
+        tickfont=dict(color='white'),
+        gridcolor="rgba(255,255,255,0.1)",
+        row=1, col=1
+    )
+    
+    fig.update_yaxes(
+        title_text='Drawdown (%)',
+        title_font=dict(color='white'),
+        tickfont=dict(color='white'),
+        gridcolor="rgba(255,255,255,0.1)",
+        row=2, col=1
+    )
+
+    return fig
+
+
+def rolling_sharpe_ratio_chart(historical_values, window=30, risk_free_rate=0.02):
+    """Create rolling Sharpe ratio chart to show risk-adjusted performance over time"""
+    if historical_values.empty:
+        return None
+
+    portfolio_history = historical_values[
+        historical_values['symbol'] == 'PORTFOLIO_TOTAL'
+    ].copy()
+    
+    if portfolio_history.empty or len(portfolio_history) < window * 2:
+        return None
+
+    portfolio_history['date'] = pd.to_datetime(portfolio_history['date'])
+    portfolio_history = portfolio_history.sort_values('date')
+    portfolio_history['returns'] = portfolio_history['market_value'].pct_change()
+    
+    # Calculate rolling Sharpe ratio
+    portfolio_history['excess_returns'] = portfolio_history['returns'] - (risk_free_rate / 252)
+    portfolio_history['rolling_mean'] = portfolio_history['excess_returns'].rolling(
+        window=window, min_periods=window//2
+    ).mean()
+    portfolio_history['rolling_std'] = portfolio_history['returns'].rolling(
+        window=window, min_periods=window//2
+    ).std()
+    
+    # Annualized Sharpe ratio
+    portfolio_history['rolling_sharpe'] = (
+        portfolio_history['rolling_mean'] / portfolio_history['rolling_std']
+    ) * np.sqrt(252)
+    
+    clean_data = portfolio_history.dropna()
+    
+    if clean_data.empty:
+        return None
+
+    fig = go.Figure()
+    
+    # Add Sharpe ratio line
+    fig.add_trace(go.Scatter(
+        x=clean_data['date'],
+        y=clean_data['rolling_sharpe'],
+        mode='lines',
+        name=f'{window}-Day Rolling Sharpe Ratio',
+        line=dict(color='#ffe6a7', width=3),
+        hovertemplate="<b>Rolling Sharpe Ratio</b><br>Date: %{x}<br>Sharpe: %{y:.3f}<extra></extra>"
+    ))
+    
+    # Add benchmark lines
+    fig.add_hline(y=1.0, line_dash="dash", line_color="rgba(255,255,255,0.8)", 
+                  line_width=2, annotation_text="Good (1.0)")
+    fig.add_hline(y=0.5, line_dash="dash", line_color="rgba(255,255,255,0.6)", 
+                  line_width=1, annotation_text="Acceptable (0.5)")
+    fig.add_hline(y=0.0, line_dash="solid", line_color="rgba(255,255,255,0.4)", 
+                  line_width=1)
+    
+    # Add average line
+    avg_sharpe = clean_data['rolling_sharpe'].mean()
+    fig.add_hline(
+        y=avg_sharpe,
+        line_dash="dot",
+        line_color='#f4a261',
+        line_width=3,
+        annotation_text=f"Average: {avg_sharpe:.3f}",
+        annotation_position="top left"
+    )
+
+    fig.update_layout(
+        title=dict(
+            text=f'Rolling Sharpe Ratio Analysis ({window}-Day Window)',
+            font=dict(size=18, color='white'),
+            x=0.5
+        ),
+        xaxis=dict(
+            title=dict(text='Date', font=dict(color='white')),
+            tickfont=dict(color='white'),
+            gridcolor="rgba(255,255,255,0.1)"
+        ),
+        yaxis=dict(
+            title=dict(text='Sharpe Ratio', font=dict(color='white')),
+            tickfont=dict(color='white'),
+            gridcolor="rgba(255,255,255,0.1)"
+        ),
+        paper_bgcolor=THEME_COLORS["dark_green"],
+        plot_bgcolor=THEME_COLORS["dark_green"],
+        font=dict(color='white'),
+        showlegend=False,
+        annotations=[
+        dict(
+            x=0.03, y=1.05,  # Above the chart area
+            xref='paper', yref='paper',
+            text='<b>Sharpe Ratio Guide:</b><br>• > 1.0: Excellent<br>• 0.5-1.0: Good<br>• 0-0.5: Acceptable<br>• < 0: Poor',
+            showarrow=False,
+            font=dict(size=10, color='white'),
+            bgcolor='rgba(0,0,0,0.7)',
+            bordercolor='white',
+            borderwidth=1
+            )
+        ]
+
+    )
+
+    return fig
+
+
+
+def render_risk_analysis_extended(tracker):
+    """Extended render function with new risk analysis visualizations"""
+    if tracker.portfolio.empty:
+        st.warning("No portfolio data available for risk analysis.")
+        return
+    
+    st.header("⚠️ Risk Analysis Dashboard")
+    
+    # Validate data
+    clean_portfolio = helpers.validate_portfolio_data(tracker.portfolio.copy())
+    
+    # Risk metrics summary (existing code)
+    risk_metrics = risk_metrics_summary(
+        clean_portfolio, 
+        tracker.historical_values, 
+        getattr(tracker, 'risk_free_rate', 0.02)
+    )
+    
+    if risk_metrics:
+        st.subheader("📈 Risk Metrics Summary")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Volatility", f"{risk_metrics['Volatility (Annualized)']:.2%}")
+            st.metric("Skewness", f"{risk_metrics['Skewness']:.3f}")
+        
+        with col2:
+            st.metric("VaR (95%)", f"{risk_metrics['VaR (95%)']:.2%}")
+            st.metric("CVaR (95%)", f"{risk_metrics['CVaR (95%)']:.2%}")
+        
+        with col3:
+            st.metric("Max Drawdown", f"{risk_metrics['Maximum Drawdown']:.2%}")
+            st.metric("Sharpe Ratio", f"{risk_metrics['Sharpe Ratio']:.3f}")
+        
+        with col4:
+            st.metric("Sortino Ratio", f"{risk_metrics['Sortino Ratio']:.3f}")
+            st.metric("Kurtosis", f"{risk_metrics['Kurtosis']:.3f}")
+    
+    # Existing charts
+    risk_return_fig = risk_return_scatter(clean_portfolio)
+    if risk_return_fig:
+        st.plotly_chart(risk_return_fig, use_container_width=True)
+    
+    # Volatility and Drawdown Analysis (existing)
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        volatility_fig = portfolio_volatility_chart(tracker.historical_values)
+        if volatility_fig:
+            st.plotly_chart(volatility_fig, use_container_width=True)
+    
+    with col2:
+        drawdown_fig = drawdown_chart(tracker.historical_values)
+        if drawdown_fig:
+            st.plotly_chart(drawdown_fig, use_container_width=True)
+    
+    # NEW: Individual Asset Analysis and Return vs Drawdown
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        st.subheader("🎯 Individual Asset Risk vs Return")
+        individual_risk_fig = individual_asset_risk_return_scatter(clean_portfolio, tracker.historical_values)
+        if individual_risk_fig:
+            st.plotly_chart(individual_risk_fig, use_container_width=True)
+        else:
+            st.info("Insufficient data for individual asset risk-return analysis.")
+    
+    with col4:
+        st.subheader("📊 Portfolio Return vs Drawdown")
+        return_drawdown_fig = portfolio_return_vs_drawdown_chart(tracker.historical_values)
+        if return_drawdown_fig:
+            st.plotly_chart(return_drawdown_fig, use_container_width=True)
+        else:
+            st.info("Insufficient data for return vs drawdown analysis.")
+    
+    # Value at Risk Analysis (existing)
+    var_fig = value_at_risk_chart(tracker.historical_values)
+    if var_fig:
+        st.plotly_chart(var_fig, use_container_width=True)
+    
+    # NEW: Rolling Sharpe Ratio
+    st.subheader("📈 Rolling Risk-Adjusted Performance")
+    rolling_sharpe_fig = rolling_sharpe_ratio_chart(tracker.historical_values)
+    if rolling_sharpe_fig:
+        st.plotly_chart(rolling_sharpe_fig, use_container_width=True)
+    else:
+        st.info("Insufficient data for rolling Sharpe ratio analysis.")
+    
+    # Correlation Analysis (existing)
+    col5, col6 = st.columns(2)
+    
+    with col5:
+        correlation_fig = correlation_heatmap(clean_portfolio, tracker.historical_values)
+        if correlation_fig:
+            st.plotly_chart(correlation_fig, use_container_width=True)
+    
+    with col6:
         beta_fig = beta_analysis_chart(clean_portfolio, tracker.historical_values)
         if beta_fig:
             st.plotly_chart(beta_fig, use_container_width=True)

@@ -55,6 +55,9 @@ def show_optimization_info():
             <strong>Note:</strong> Optimization is based on historical data and assumes past performance patterns will continue. 
             Always consider your risk tolerance and investment goals.
         </p>
+        <p style="color: #e76f51; font-size: 0.9rem; margin-bottom: 0;">
+            <strong> Disclaimer: This tool is for informational purposes only. While care has been taken in its design, it may occasionally produce incorrect results depending on data format. The developer is not responsible for any financial decisions or actions taken based on this tool.</strong>
+        </p>
     </div>
     """, unsafe_allow_html=True)
 

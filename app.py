@@ -516,8 +516,8 @@ def image_to_base64(path):
 def main():
     # Set page configuration
     st.set_page_config(
-        page_title="Financial Analyzer",
-        page_icon="",
+        page_title="Vault Investment",
+        page_icon="assets/profile.png",
         layout="wide",
         initial_sidebar_state="expanded"
     )
@@ -529,11 +529,17 @@ def main():
     if 'transactions_df' not in st.session_state:
         st.session_state['transactions_df'] = None
 
-    # st.image("assets/logo1.png", width=60)
-    st.markdown("""
-    <h1 style="color: black; margin: 0;">Vault Finance</h1>
-    """, unsafe_allow_html=True)
-
+    # Option 1: Using HTML with flexbox (Recommended)
+    st.markdown(f"""
+    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px;">
+        <img src="data:image/png;base64,{image_to_base64('assets/logo1.png')}" width="60" style="margin: 0;">
+        <div>
+            <h1 style="color: black; margin: 0;">Vault Investment</h1>
+        </div>
+    </div>
+    <h2 style="color: gray; margin: 1px;"> Portfolio and Risk Analyzer with Optimization</h2>
+    <h5 style="color: red; margin: 10px;"> Disclaimer: This tool is for informational purposes only. Don't use it as a financial advisor</h5>
+""", unsafe_allow_html=True)
         
     tab1, tab2, tab3 = st.tabs([ 
         " Investment Portfolio", "Portfolio Optimization", "Risk Analysis"
