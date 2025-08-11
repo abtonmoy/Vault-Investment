@@ -506,6 +506,12 @@ class PortfolioOptimizer:
         except Exception as e:
             st.error(f"Error getting asset statistics: {str(e)}")
             return pd.DataFrame()
+        
+    def update_tracker_historical_data(tracker, symbols, period="1y"):
+        fetcher = DataFetcher()
+        price_data, _, historical_values = fetcher.fetch_historical_data(symbols, period)
+        tracker.historical_values = historical_values
+        return tracker
 
 
 def run_portfolio_optimization(tracker, optimization_params: Dict = None):

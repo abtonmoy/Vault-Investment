@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from core.data_fetcher import DataFetcher
 from core.robinhood_parser import parse_investment_documents
 from utils.equity_vis import render_equity_visualizations
 from core.portfolio_optimizer import run_portfolio_optimization
@@ -187,6 +188,13 @@ def run_optimization_interface(tracker):
                     st.subheader("📊 Fetching Historical Data")
                     price_data = optimizer.fetch_historical_data(valid_tickers, period=data_period)
                     
+                    if not price_data.empty:
+                        # Generate historical_values format required by risk analysis
+                        historical_values = DataFetcher().prepare_historical_values(price_data)
+                        st.session_state.tracker.historical_values = historical_values  #  CRITICAL UPDATE
+                        st.session_state.tracker = tracker  # Propagate changes
+
+
                     if price_data.empty:
                         st.error("❌ Failed to fetch historical data. Please check your internet connection and ticker symbols.")
                         return
@@ -248,12 +256,26 @@ def run_optimization_interface(tracker):
                             optimizer, charts, run_monte_carlo, generate_frontier, 
                             num_simulations, num_frontier_points, optimal_portfolio
                         )
+                    if hasattr(st.session_state.tracker, 'historical_values'):
+                        show_historical_performance_charts(st.session_state.tracker, charts)
                     
+                    # NEW: Show asset performance chart
+                    show_asset_performance_chart(st.session_state.tracker, charts)
+
+                    # NEW: Show risk-return scatter
+                    show_risk_return_scatter(optimizer, charts)
+
+                    # NEW: Show correlation heatmap
+                    show_correlation_heatmap(optimizer, charts)
+
                     # Compare with current portfolio
                     compare_portfolios(tracker, optimizer, optimal_portfolio, charts)
                     
                     # Display individual asset statistics
                     display_asset_statistics(optimizer)
+
+                    # NEW: Show drawdown analysis
+                    show_drawdown_analysis(optimizer, charts)
                     
                     # Export options
                     if compare_methods and 'all_optimization_results' in st.session_state:
@@ -1055,6 +1077,76 @@ def show_portfolio_preview():
             else:
                 # Fallback to showing all columns
                 st.dataframe(tracker.portfolio.head(10), use_container_width=True)
+
+# Add after show_portfolio_preview() function
+
+def show_historical_performance_charts(tracker, charts):
+    """Show historical performance charts"""
+    st.subheader("📈 Historical Performance Analysis")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        try:
+            worth_fig = charts.create_portfolio_worth_chart(tracker)
+            st.plotly_chart(worth_fig, use_container_width=True, key="portfolio_worth")
+        except Exception as e:
+            st.error(f"Error creating portfolio worth chart: {str(e)}")
+    
+    with col2:
+        try:
+            composition_fig = charts.create_portfolio_composition_over_time(tracker)
+            st.plotly_chart(composition_fig, use_container_width=True, key="portfolio_composition")
+        except Exception as e:
+            st.error(f"Error creating composition chart: {str(e)}")
+    
+    try:
+        metrics_fig = charts.create_portfolio_metrics_dashboard(tracker)
+        st.plotly_chart(metrics_fig, use_container_width=True, key="portfolio_metrics")
+    except Exception as e:
+        st.error(f"Error creating metrics dashboard: {str(e)}")
+
+def show_asset_performance_chart(tracker, charts):
+    """Show asset performance chart"""
+    st.subheader("📈 Individual Asset Performance")
+    try:
+        perf_fig = charts.create_asset_performance_chart(tracker)
+        st.plotly_chart(perf_fig, use_container_width=True, key="asset_performance")
+    except Exception as e:
+        st.error(f"Error creating asset performance chart: {str(e)}")
+
+def show_risk_return_scatter(optimizer, charts):
+    """Show risk-return scatter plot"""
+    st.subheader("📊 Risk-Return Analysis")
+    try:
+        weights = st.session_state.optimization_results['weights'] if 'optimization_results' in st.session_state else None
+        scatter_fig = charts.create_risk_return_scatter(optimizer.returns_data, weights)
+        st.plotly_chart(scatter_fig, use_container_width=True, key="risk_return_scatter")
+    except Exception as e:
+        st.error(f"Error creating risk-return scatter: {str(e)}")
+
+def show_correlation_heatmap(optimizer, charts):
+    """Show correlation heatmap"""
+    st.subheader("🔗 Asset Correlation Matrix")
+    try:
+        heatmap_fig = charts.create_correlation_heatmap(optimizer.returns_data)
+        st.plotly_chart(heatmap_fig, use_container_width=True, key="correlation_heatmap")
+    except Exception as e:
+        st.error(f"Error creating correlation heatmap: {str(e)}")
+
+def show_drawdown_analysis(optimizer, charts):
+    """Show drawdown analysis"""
+    st.subheader("📉 Drawdown Analysis")
+    try:
+        if 'optimization_results' in st.session_state:
+            weights_array = np.array([
+                st.session_state.optimization_results['weights'].get(ticker, 0) 
+                for ticker in optimizer.tickers
+            ])
+            drawdown_fig = charts.create_drawdown_chart(optimizer.returns_data, weights_array)
+            st.plotly_chart(drawdown_fig, use_container_width=True, key="drawdown_chart")
+    except Exception as e:
+        st.error(f"Error creating drawdown chart: {str(e)}")
 
 
 # Example usage

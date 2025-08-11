@@ -5,6 +5,7 @@ from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from core.data_fetcher import DataFetcher
 
 def show_risk_analysis_dashboard():
     """Main UI for portfolio risk analysis"""
@@ -30,6 +31,7 @@ def show_risk_analysis_dashboard():
             <p>Historical price data is required for risk analysis. Please go back to the <strong>Investment Portfolio</strong> tab and click the <strong>"📊 Load Historical Data for Visualizations"</strong> button.</p>
         </div>
         """, unsafe_allow_html=True)
+        # st.session_state.tracker.historical_values = (DataFetcher().prepare_historical_values(price_data))
         return
 
     # Portfolio data is available - proceed with risk analysis
@@ -199,6 +201,8 @@ def show_risk_analysis_dashboard():
                 file_name=f"risk_analysis_report_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv"
             )
+        else:
+            st.error("Could not generate report. Check if you have valid portfolio data and risk metrics.")
 
 def calculate_risk_metrics_summary(portfolio_df, historical_values, risk_free_rate=0.02):
     """Calculate comprehensive risk metrics"""
@@ -623,28 +627,32 @@ def create_beta_chart(portfolio_df, historical_values, benchmark_symbol='SPY'):
 
 def generate_risk_report(portfolio_df, historical_values, risk_metrics):
     """Generate comprehensive risk analysis report"""
-    if not risk_metrics:
-        return None
-
     report_data = []
     
     # Risk metrics
-    for metric, value in risk_metrics.items():
-        if not np.isinf(value):
-            report_data.append({
-                'Metric': metric,
-                'Value': f"{value:.4f}" if abs(value) < 1 else f"{value:.2f}",
-                'Category': 'Risk Metric'
-            })
+    if risk_metrics:
+        for metric, value in risk_metrics.items():
+            if not np.isinf(value):
+                report_data.append({
+                    'Metric': metric,
+                    'Value': f"{value:.4f}" if abs(value) < 1 else f"{value:.2f}",
+                    'Category': 'Risk Metric'
+                })
     
-    # Portfolio composition
-    if not portfolio_df.empty:
-        for _, row in portfolio_df.iterrows():
+    # Portfolio composition - FILTER OUT PORTFOLIO_TOTAL
+    valid_assets = portfolio_df[portfolio_df['symbol'] != 'PORTFOLIO_TOTAL']
+    total_value = valid_assets['market_value'].sum()
+    
+    if not valid_assets.empty and total_value > 0:
+        for _, row in valid_assets.iterrows():
             report_data.append({
                 'Metric': f"{row['symbol']} Weight",
-                'Value': f"{(row['market_value'] / portfolio_df['market_value'].sum()):.2%}",
+                'Value': f"{(row['market_value'] / total_value):.2%}",
                 'Category': 'Portfolio Composition'
             })
     
+    if not report_data:
+        return None
+
     report_df = pd.DataFrame(report_data)
     return report_df.to_csv(index=False)
