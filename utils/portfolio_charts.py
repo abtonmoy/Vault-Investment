@@ -99,17 +99,21 @@ class PortfolioCharts:
                     # Prefer pre-calculated portfolio total
                     if isinstance(date_data, dict) and 'total_value' in date_data:
                         total_value = float(date_data['total_value'])
+                    elif isinstance(date_data, dict) and all(isinstance(v, (int, float)) for v in date_data.values()):
+                        # If values are already market values per asset
+                        total_value = sum(date_data.values())
                     else:
-                        # Calculate from current holdings and historical prices
+                        # Fallback: current qty * historical price
                         for _, holding in tracker.portfolio.iterrows():
-                            symbol = holding.get('symbol')
+                            symbol = holding['symbol']
                             qty = holding.get('quantity', 0)
-                            if symbol and pd.notnull(qty) and symbol in date_data:
+                            if symbol and symbol in date_data:
                                 try:
                                     price = float(date_data[symbol])
                                     total_value += qty * price
                                 except (ValueError, TypeError):
                                     continue
+
 
                     parsed_date = self._parse_dates_safe([date_str])[0]
                     if not pd.isna(parsed_date):
