@@ -542,7 +542,7 @@ def main():
 """, unsafe_allow_html=True)
         
     tab1, tab2, tab3 = st.tabs([ 
-        " Investment Portfolio", "Portfolio Optimization", "Risk Analysis"
+        "Portfolio Analysis", "Portfolio Optimization", "Risk Analysis"
     ])
     
 
