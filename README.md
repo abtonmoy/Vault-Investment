@@ -20,7 +20,7 @@ The application provides a **user-friendly interface** with detailed visualizati
 ## Key Features
 
 - **Data Import:** Supports CSV uploads from Robinhood, Fidelity, Charles Schwab, Vanguard, and generic formats. Handles various formats with robust parsing logic.
-- **Portfolio Tracking:** Calculates portfolio value, gain/loss, asset allocation, and performance metrics.
+- **Portfolio Tracking:** Calculates portfolio value, sankey charts, gain/loss, asset allocation, and performance metrics.
 - **Portfolio Optimization:** Uses Modern Portfolio Theory for strategies like:
   - Maximum Sharpe Ratio
   - Minimum Volatility
@@ -38,6 +38,50 @@ The application provides a **user-friendly interface** with detailed visualizati
 - **Customizable Parameters:** Adjustable risk-free rate, data period, and max allocation.
 - **Data Validation:** Built-in checks and error handling.
 - **Clear Documentation:** Well-commented code and detailed README.
+
+## Screenshots
+
+Below are key screenshots showcasing various features of the Vault Investment app.
+
+<p align="center">
+  <img src="assets/sankey.png" alt="Portfolio Sankey Chart" width="700" />
+</p>
+<p align="center"><em>Interactive Sankey chart illustrating portfolio asset allocation flow</em></p>
+
+<p align="center">
+  <img src="assets/efficient_fronter.png" alt="Efficient Frontier" width="700" />
+</p>
+<p align="center"><em>Efficient Frontier visualization showing optimal risk-return trade-offs</em></p>
+
+<p align="center">
+  <img src="assets/individual_asset_perf.png" alt="Individual Asset Performance" width="700" />
+</p>
+<p align="center"><em>Performance metrics of individual assets over the selected period</em></p>
+
+<p align="center">
+  <img src="assets/portfolio_performence.png" alt="Portfolio Performance" width="700" />
+</p>
+<p align="center"><em>Overall portfolio performance and historical value trends</em></p>
+
+<p align="center">
+  <img src="assets/risk_metrics.png" alt="Key Risk Metrics" width="700" />
+</p>
+<p align="center"><em>Key risk metrics dashboard including volatility, VaR, and drawdown</em></p>
+
+<p align="center">
+  <img src="assets/rolling_sharpe.png" alt="Rolling Sharpe Ratio" width="700" />
+</p>
+<p align="center"><em>Rolling Sharpe Ratio chart demonstrating risk-adjusted returns over time</em></p>
+
+<p align="center">
+  <img src="assets/risk_v_return.png" alt="Risk vs Return Scatter Plot" width="700" />
+</p>
+<p align="center"><em>Risk vs. return scatter plot for portfolio assets</em></p>
+
+<p align="center">
+  <img src="assets/non_linear_beta.png" alt="Non-linear Beta Analysis" width="700" />
+</p>
+<p align="center"><em>Advanced non-linear beta analysis of portfolio sensitivity</em></p>
 
 ---
 
