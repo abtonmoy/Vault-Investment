@@ -1,6 +1,5 @@
 import re
 from datetime import datetime, timedelta
-import pdfplumber
 import PyPDF2
 import streamlit as st
 import pandas as pd
