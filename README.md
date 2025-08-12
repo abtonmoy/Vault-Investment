@@ -54,6 +54,11 @@ Below are key screenshots showcasing various features of the Vault Investment ap
 </p>
 <p align="center"><em>Interactive Sankey chart illustrating portfolio asset allocation flow</em></p>
 
+<p align="center">
+  <img src="assets/asset_cor.png" alt="Portfolio asset correlations" width="700" />
+</p>
+<p align="center"><em>Portfolio asset correlations</em></p>
+
 - Portfolio Optimization:
 <p align="center">
   <img src="assets/efficient_fronter.png" alt="Efficient Frontier" width="700" />
