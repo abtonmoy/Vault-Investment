@@ -2,6 +2,8 @@
 
 ## Overview
 
+![Vault Investment Dashboard](assets/overview.png)
+
 Vault Investment is a comprehensive web application built with Streamlit, designed to empower investors with tools for portfolio tracking, optimization, and risk analysis.
 
 It allows users to:
@@ -70,7 +72,8 @@ Vault Investment/
 │   ├── risk_analysis.py         # Risk metrics & charts
 │   ├── risk_beta_analysis.py    # Advanced beta analysis
 │   ├── portfolio_charts.py      # Chart rendering
-│   └── theme.py                 # Custom Streamlit theme
+│   ├── theme.py                 # Custom Streamlit theme
+|   └── other visualizations...
 ├── helpers.py                   # Data processing helpers
 ├── requirements.txt             # Dependencies
 └── README.md                    # Documentation
