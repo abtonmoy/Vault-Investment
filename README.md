@@ -241,7 +241,7 @@ This tool is for **informational purposes only**. While designed with care, it m
 - Automated testing
 - Cloud deployment (Heroku, AWS, Azure)
 
-## 📧 Developer Contact
+## Developer Contact
 
 [Abdul Basit Tonmoy](abdulbasittonmoy@gmail.com)
 GitHub Repo: [https://github.com/abtonmoy/vault-Investment](https://github.com/abtonmoy/vault-Investment)
