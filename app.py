@@ -517,7 +517,7 @@ def main():
     # Set page configuration
     st.set_page_config(
         page_title="Vault Investment",
-        page_icon="assets/profile.png",
+        page_icon="assets\profile.png",
         layout="wide",
         initial_sidebar_state="expanded"
     )
