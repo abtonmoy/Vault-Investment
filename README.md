@@ -43,15 +43,27 @@ The application provides a **user-friendly interface** with detailed visualizati
 
 Below are key screenshots showcasing various features of the Vault Investment app.
 
+- Portfolio Tracking:
+<p align="center">
+  <img src="assets/upload_data.png" alt="Upload Investment Data" width="700" />
+</p>
+<p align="center"><em>Uploading investment data from CSV files</em></p>
+
 <p align="center">
   <img src="assets/sankey.png" alt="Portfolio Sankey Chart" width="700" />
 </p>
 <p align="center"><em>Interactive Sankey chart illustrating portfolio asset allocation flow</em></p>
 
+- Portfolio Optimization:
 <p align="center">
   <img src="assets/efficient_fronter.png" alt="Efficient Frontier" width="700" />
 </p>
 <p align="center"><em>Efficient Frontier visualization showing optimal risk-return trade-offs</em></p>
+
+<p align="center">
+  <img src="assets/montecarlo_sim.png" alt="Monte carlo sim" width="700" />
+</p>
+<p align="center"><em>Monte carlo simulation</em></p>
 
 <p align="center">
   <img src="assets/individual_asset_perf.png" alt="Individual Asset Performance" width="700" />
@@ -61,12 +73,14 @@ Below are key screenshots showcasing various features of the Vault Investment ap
 <p align="center">
   <img src="assets/portfolio_performence.png" alt="Portfolio Performance" width="700" />
 </p>
-<p align="center"><em>Overall portfolio performance and historical value trends</em></p>
+<p align="center"><em>Overall portfolio performance and Drawdown analysis</em></p>
+
+- Portfolio Risk Analysis:
 
 <p align="center">
   <img src="assets/risk_metrics.png" alt="Key Risk Metrics" width="700" />
 </p>
-<p align="center"><em>Key risk metrics dashboard including volatility, VaR, and drawdown</em></p>
+<p align="center"><em>Key risk metrics dashboard including volatility, VaR, drawdown, etc</em></p>
 
 <p align="center">
   <img src="assets/rolling_sharpe.png" alt="Rolling Sharpe Ratio" width="700" />
@@ -82,6 +96,10 @@ Below are key screenshots showcasing various features of the Vault Investment ap
   <img src="assets/non_linear_beta.png" alt="Non-linear Beta Analysis" width="700" />
 </p>
 <p align="center"><em>Advanced non-linear beta analysis of portfolio sensitivity</em></p>
+<p align="center">
+  <img src="assets/risk_v_drawdown.png" alt="Risk vs drawdown Plot" width="700" />
+</p>
+<p align="center"><em>Risk vs. drawdown plot for portfolio assets</em></p>
 
 ---
 
