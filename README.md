@@ -243,6 +243,6 @@ This tool is for **informational purposes only**. While designed with care, it m
 
 ## Developer Contact
 
-# Abdul Basit Tonmoy -> (abdulbasittonmoy@gmail.com)
+- Abdul Basit Tonmoy -> (abdulbasittonmoy@gmail.com)
 
 GitHub Repo: [https://github.com/abtonmoy/vault-Investment](https://github.com/abtonmoy/vault-Investment)
