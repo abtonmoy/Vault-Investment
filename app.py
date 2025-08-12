@@ -519,8 +519,7 @@ def main():
         page_title="Vault Investment",
         page_icon="assets/profile.png",
         layout="wide",
-        initial_sidebar_state="expanded",
-        theme={"base": "light"}
+        initial_sidebar_state="expanded"
     )
     
     # Apply global theme
